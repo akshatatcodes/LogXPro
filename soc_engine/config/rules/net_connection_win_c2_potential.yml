@@ -1,0 +1,17 @@
+title: Outbound Connection to Potential C2
+id: net_connection_win_c2_potential
+description: Detects outbound network connection to suspicious IP ranges
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.ip:
+            - "8.8.8.8"
+            - "1.1.1.1"
+            - "5.5.5.5" # C2 test IP
+    condition: selection
+tags:
+    - attack.t1071
+level: high

@@ -1,0 +1,14 @@
+title: RDP Logon Bruteforce
+id: win_system_rdp_bruteforce
+description: Detects RDP logon failure patterns indicating brute force
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        event.code: 4625
+        # logon_type: 10 is RDP
+    condition: selection
+tags:
+    - attack.t1078
+level: medium

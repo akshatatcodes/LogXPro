@@ -1,0 +1,16 @@
+title: Scheduled Task Creation
+id: proc_creation_win_scheduled_task_creation
+description: Detects scheduled task creation for persistence
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "schtasks"
+            - "/create"
+    condition: selection
+tags:
+    - attack.t1053.005
+level: medium

@@ -1,0 +1,11 @@
+elasticsearch>=8.13.0,<9.0.0
+redis>=5.0.0
+psycopg2-binary>=2.9.0
+pyyaml>=6.0.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+requests>=2.31.0
+pydantic>=2.6.0
+pysigma>=1.0.0
+pysigma-backend-elasticsearch
+pydantic-settings>=2.2.0

@@ -1,0 +1,16 @@
+chain_id: "chain_001"
+name: "Phishing to C2"
+stages:
+  - stage: 1
+    mitre: "T1078"
+    sigma_rules: ["win_system_rdp_bruteforce"]
+  - stage: 2
+    mitre: "T1059.001"
+    sigma_rules: ["proc_creation_win_powershell_encoded_cmd"]
+  - stage: 3
+    mitre: "T1053.005"
+    sigma_rules: ["proc_creation_win_scheduled_task_creation"]
+  - stage: 4
+    mitre: "T1071"
+    sigma_rules: ["net_connection_win_c2_potential"]
+time_window_minutes: 10

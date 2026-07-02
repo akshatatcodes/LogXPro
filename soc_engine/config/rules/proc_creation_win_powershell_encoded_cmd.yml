@@ -1,0 +1,17 @@
+title: PowerShell Encoded Command Execution
+id: proc_creation_win_powershell_encoded_cmd
+description: Detects PowerShell command line with encoded argument
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "-encodedcommand"
+            - "-enc"
+            - "-e "
+    condition: selection
+tags:
+    - attack.t1059.001
+level: high

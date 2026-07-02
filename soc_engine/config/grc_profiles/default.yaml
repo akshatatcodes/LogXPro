@@ -1,0 +1,21 @@
+client: "Default_SOC_Client"
+industry: "generic"
+frameworks: 
+  - "soc2"
+  - "hipaa"
+enabled_rule_groups:
+  - "active_directory"
+  - "email"
+  - "endpoint"
+  - "network"
+disabled_rule_groups:
+  - "pci"
+alert_sensitivity: "medium"
+auto_response_allowed: false
+retention_days: 90
+pii_redaction: false
+log_sources_available:
+  - "windows_event_logs"
+  - "sysmon"
+  - "dns"
+  - "ad"

@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+ENV/
+env/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment configurations
+.env
+
+# Docker volume data directories
+pgdata/
+esdata/
+redisdata/
+
+# ChromaDB vector store
+chromadb_store/
+
+# IDE / OS temporary files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

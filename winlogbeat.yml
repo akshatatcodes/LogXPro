@@ -1,0 +1,18 @@
+winlogbeat.event_logs:
+  - name: Microsoft-Windows-Sysmon/Operational
+  - name: Security
+    event_id: 4624, 4625
+
+output.logstash:
+  hosts: ["localhost:5044"]
+  # Optional retry settings
+  worker: 1
+  bulk_max_size: 2048
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: C:\ProgramData\winlogbeat\Logs
+  name: winlogbeat
+  keepfiles: 7
+  permissions: 0640
