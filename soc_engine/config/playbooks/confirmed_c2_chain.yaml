@@ -1,0 +1,26 @@
+id: confirmed_c2_chain
+name: "Confirmed C2 / Ransomware Chain"
+description: "Full Tier 3/4 confirmed attack chain — auto-containment allowed if GRC permits"
+trigger_tier: [3, 4]
+matched_techniques:
+  - T1071
+  - T1071.001
+  - T1486
+  - T1490
+matched_chain: ""  # matches any chain at Tier 3+
+actions:
+  - type: notify
+    message: "CRITICAL: Full attack chain confirmed on {host} — Chain: {chain} — Immediate containment required"
+    severity: critical
+
+  - type: recommend
+    text: >
+      IMMEDIATE ACTIONS for basket {basket} on {host} (User: {user}):
+      1. Isolate {host} from the network via EDR console or VLAN change NOW.
+      2. Reset all credentials for {user} across domain and all SaaS platforms.
+      3. Preserve memory dump before isolation if resources allow (volatility).
+      4. Open a P1 incident war-room and notify CISO / IR team within 15 minutes.
+      5. Preserve a forensic copy of the disk image before any remediation.
+
+  - type: auto_response
+    enabled: true   # Only executes if GRC profile has auto_response_allowed: true

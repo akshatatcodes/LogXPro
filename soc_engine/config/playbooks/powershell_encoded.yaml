@@ -1,0 +1,25 @@
+id: powershell_encoded_command
+name: "PowerShell Encoded Command Detected"
+description: "Fires on Tier 1-2 alerts involving PowerShell obfuscation techniques (T1059.001)"
+trigger_tier: [1, 2, 3, 4]
+matched_techniques:
+  - T1059.001
+  - T1059
+actions:
+  - type: notify
+    message: "PowerShell encoded command detected on {host} (User: {user}) — Tier {tier}"
+    severity: medium
+
+  - type: recommend
+    text: >
+      Review parent process tree for {host}. If parent is an unexpected application
+      (e.g. Word, Excel, browser), assume phishing dropper. Isolate the host immediately.
+      Check for scheduled tasks created by {user} in the last 30 minutes.
+
+  - type: enrich
+    targets:
+      - process_hash
+      - parent_process_hash
+
+  - type: auto_response
+    enabled: false   # Human approval required at this tier

@@ -41,6 +41,10 @@ class SOCEngine:
 
         self.load_grc_profile()
 
+        # Phase 6: Pre-load playbooks at startup
+        from soc_engine.playbooks.playbook_runner import load_playbooks
+        load_playbooks()
+
         if not self.simulate:
             self.init_connections()
 
@@ -139,6 +143,14 @@ class SOCEngine:
         except Exception as e:
             print(f"[!] Redis error: {e} → switching to SIMULATE mode.")
             self.simulate = True
+
+        # Phase 6: Apply Elasticsearch ILM policy (retention from GRC profile)
+        if self.es_client and not self.simulate:
+            try:
+                from soc_engine.infra.es_ilm import apply_ilm_policy
+                apply_ilm_policy(self.es_client, self.grc_profile)
+            except Exception as ilm_err:
+                print(f"[!] ILM policy apply failed (non-fatal): {ilm_err}")
 
     # ------------------------------------------------------------------ #
     # Run dispatch                                                          #
@@ -350,11 +362,11 @@ class SOCEngine:
     def _handle_alert(self, payload: dict):
         """
         Alert dispatch: prints structured JSON, indexes to Elasticsearch 'soc-alerts',
-        and forwards high/critical alerts to TheHive.
+        forwards high/critical alerts to TheHive, runs playbooks, and writes audit log.
         """
         import json
         print(f"    [ALERT PAYLOAD] {json.dumps(payload, indent=2, default=str)}")
-        
+
         # Phase 4: Index to Elasticsearch index 'soc-alerts'
         if not self.simulate and self.es_client:
             try:
@@ -371,6 +383,60 @@ class SOCEngine:
                 create_case(payload)
             except Exception as e:
                 print(f"[!] Failed to forward alert to TheHive: {e}")
+
+        # Phase 6: Run playbook engine
+        playbook_result = {}
+        try:
+            from soc_engine.playbooks.playbook_runner import run_playbook
+            playbook_result = run_playbook(payload, self.grc_profile)
+            payload["playbook_result"] = playbook_result
+        except Exception as pb_err:
+            print(f"[!] Playbook runner error: {pb_err}")
+
+        # Phase 6: Run YARA scan on basket event command lines
+        try:
+            from soc_engine.detection.yara_scanner import scan_basket_events
+            basket_events = payload.get("events") or []
+            # If events are not embedded, simulate by scanning matched stage descriptions
+            if not basket_events:
+                # Create mock events from matched stages for simulation
+                basket_events = [
+                    {"raw_event": stage.get("event", {})} for stage in payload.get("matched_stages", [])
+                ]
+            yara_matches = scan_basket_events(basket_events)
+            if yara_matches:
+                payload["yara_matches"] = yara_matches
+                print(f"    [YARA] {len(yara_matches)} rule(s) matched in basket events: {[m['rule'] for m in yara_matches]}")
+        except Exception as yara_err:
+            print(f"[!] YARA scan error (non-fatal): {yara_err}")
+
+        # Phase 6: Write to audit log (live mode only)
+        if not self.simulate:
+            try:
+                conn = db.get_db_connection()
+                try:
+                    from soc_engine.models.audit_log import log_alert_fired, log_playbook_fired
+                    log_alert_fired(
+                        conn,
+                        basket_id=payload.get("basket_id"),
+                        rule_id=(payload.get("triggering_rule") or {}).get("id"),
+                        tier=payload.get("tier"),
+                        chain_name=payload.get("chain_name"),
+                        confidence=payload.get("confidence_score", 0)
+                    )
+                    if playbook_result.get("matched_playbooks"):
+                        log_playbook_fired(
+                            conn,
+                            basket_id=payload.get("basket_id"),
+                            playbook_id=",".join(playbook_result["matched_playbooks"]),
+                            tier=payload.get("tier"),
+                            actions_taken=playbook_result.get("notifications", []),
+                            auto_response=playbook_result.get("auto_response_triggered", False)
+                        )
+                finally:
+                    conn.close()
+            except Exception as audit_err:
+                print(f"[!] Audit log write error (non-fatal): {audit_err}")
 
     def _find_chain(self, chain_id: str | None) -> dict | None:
         if not chain_id:

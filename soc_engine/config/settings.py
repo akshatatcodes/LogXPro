@@ -57,5 +57,12 @@ class Settings:
     THEHIVE_URL     = os.getenv("THEHIVE_URL",     "http://localhost:9000")
     THEHIVE_API_KEY = os.getenv("THEHIVE_API_KEY", "")
 
+    # ------------------------------------------------------------------ #
+    # Phase 6: Playbooks, YARA, Webhooks                                   #
+    # ------------------------------------------------------------------ #
+    PLAYBOOK_DIR   = os.getenv("PLAYBOOK_DIR",   "./soc_engine/config/playbooks")
+    YARA_RULES_DIR = os.getenv("YARA_RULES_DIR", "./soc_engine/config/rules/yara")
+    WEBHOOK_URL    = os.getenv("WEBHOOK_URL",    "")   # Slack/Teams notify webhook (optional)
+
 
 settings = Settings()

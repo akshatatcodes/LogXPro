@@ -17,10 +17,12 @@ import os
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
@@ -28,7 +30,32 @@ from soc_engine.config.settings import settings
 import soc_engine.models.db as db
 from soc_engine.response.network_block import block_ip
 
-app = FastAPI(title="LogXPro SOC Engine API Server", version="2.0")
+
+# --------------------------------------------------------------------------- #
+# FastAPI lifespan (Phase 6: replaces deprecated @app.on_event("startup"))    #
+# --------------------------------------------------------------------------- #
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: launch background correlation engine if DISABLE_ENGINE is not set
+    if not os.getenv("DISABLE_ENGINE"):
+        t = threading.Thread(target=run_polling_engine, daemon=True)
+        t.start()
+    yield
+    # Shutdown: nothing to teardown (engine thread is daemonised)
+
+
+app = FastAPI(title="LogXPro SOC Engine API Server", version="3.0", lifespan=lifespan)
+
+# --------------------------------------------------------------------------- #
+# CORS Middleware (Phase 6: allows future frontend separation)                 #
+# --------------------------------------------------------------------------- #
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --------------------------------------------------------------------------- #
 # Background Engine thread                                                     #
@@ -42,14 +69,6 @@ def run_polling_engine():
         engine.run()
     except Exception as e:
         print(f"[!] Background correlation engine failed to start: {e}")
-
-@app.on_event("startup")
-def startup_event():
-    # Only run the engine background loop in live mode, not when testing/simulating
-    # You can disable this by setting environment variable DISABLE_ENGINE=1
-    if not os.getenv("DISABLE_ENGINE"):
-        t = threading.Thread(target=run_polling_engine, daemon=True)
-        t.start()
 
 
 # --------------------------------------------------------------------------- #
@@ -423,6 +442,164 @@ async def thehive_webhook(request: Request):
     except Exception as e:
         print(f"[!] Error processing TheHive webhook: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+
+# --------------------------------------------------------------------------- #
+# Phase 6: Health check, Compliance Report, Audit Log, Incident Export         #
+# --------------------------------------------------------------------------- #
+
+@app.get("/api/health")
+def health_check():
+    """Returns service health status for monitoring and load balancer checks."""
+    return {
+        "status": "ok",
+        "service": "LogXPro SOC Engine",
+        "version": "3.0",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/api/report/compliance")
+def get_compliance_report():
+    """
+    Generates a real-time GRC compliance coverage report for the active client profile.
+    Maps loaded Sigma rules against PCI-DSS, HIPAA, SOX, and NIST controls.
+    """
+    try:
+        import yaml
+        profile_path = os.path.join(
+            settings.GRC_PROFILE_DIR, f"{settings.ACTIVE_GRC_PROFILE}.yaml"
+        )
+        with open(profile_path, "r") as f:
+            grc_profile = yaml.safe_load(f)
+    except Exception:
+        grc_profile = {
+            "client": "Default_SOC_Client",
+            "industry": "generic",
+            "frameworks": ["pci-dss", "nist"],
+            "enabled_rule_groups": ["active_directory", "email", "endpoint", "network"],
+            "disabled_rule_groups": [],
+            "alert_sensitivity": "medium",
+            "auto_response_allowed": False,
+            "retention_days": 90,
+            "pii_redaction": False
+        }
+
+    try:
+        from soc_engine.reporting.compliance_reporter import generate_compliance_report
+        report = generate_compliance_report(grc_profile)
+        return report
+    except Exception as e:
+        print(f"[!] Compliance report error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/audit")
+def get_audit_log(limit: int = 100):
+    """Returns the most recent audit log entries (alert_fired, response, suppression, playbook)."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            from soc_engine.models.audit_log import get_recent_audit_log
+            entries = get_recent_audit_log(conn, limit=limit)
+            return {"status": "success", "count": len(entries), "entries": entries}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Audit log read error: {e}")
+        return {"status": "error", "entries": [], "error": str(e)}
+
+
+@app.get("/api/report/basket/{basket_id}")
+def export_basket_report(basket_id: str):
+    """
+    Exports a full Markdown incident report for the specified basket.
+    Includes basket metadata, event timeline, MITRE cards, AI narrative,
+    YARA matches, playbook result, and enrichment data.
+    """
+    try:
+        basket = db.get_basket(basket_id)
+        if not basket:
+            raise HTTPException(status_code=404, detail=f"Basket {basket_id} not found.")
+
+        events = db.get_basket_events(basket_id)
+
+        b = dict(basket)
+        created = b["created_at"].isoformat() if b.get("created_at") else "N/A"
+        updated = b["updated_at"].isoformat() if b.get("updated_at") else "N/A"
+        stages = b.get("matched_stages") or []
+        if isinstance(stages, str):
+            try:
+                import json as _json
+                stages = _json.loads(stages)
+            except Exception:
+                stages = []
+
+        # Build Markdown report
+        lines = [
+            f"# 🚨 Incident Report — Basket `{basket_id[:8]}...`",
+            "",
+            "## Basket Overview",
+            f"| Field | Value |",
+            f"|---|---|",
+            f"| Basket ID | `{basket_id}` |",
+            f"| Host | `{b.get('host_name', 'N/A')}` |",
+            f"| User | `{b.get('user_name', 'N/A')}` |",
+            f"| Source IP | `{b.get('source_ip', 'N/A')}` |",
+            f"| Status | **{b.get('status', 'N/A').upper()}** |",
+            f"| Confidence | **{b.get('confidence_score', 0)}%** |",
+            f"| Created | {created} |",
+            f"| Last Updated | {updated} |",
+            "",
+            "## Attack Chain Stages",
+        ]
+
+        if stages:
+            lines.append("| Stage | MITRE ID | Sigma Rule | Timestamp |")
+            lines.append("|---|---|---|---|")
+            for s in stages:
+                lines.append(
+                    f"| {s.get('stage', 'N/A')} | `{s.get('mitre', 'N/A')}` | "
+                    f"`{s.get('rule', 'N/A')}` | {s.get('time', 'N/A')} |"
+                )
+        else:
+            lines.append("_No matched stages recorded._")
+
+        lines += [
+            "",
+            "## Event Timeline",
+        ]
+        if events:
+            lines.append(f"Total events in basket: **{len(events)}**\n")
+            lines.append("| # | Event Type | MITRE | Ingested At |")
+            lines.append("|---|---|---|---|")
+            for i, ev in enumerate(events[:20], 1):  # cap at 20 for readability
+                ev_d = dict(ev)
+                ts = ev_d.get("ingestion_time")
+                ts_str = ts.isoformat() if ts else "N/A"
+                lines.append(
+                    f"| {i} | `{ev_d.get('event_type', 'N/A')}` | "
+                    f"`{ev_d.get('mitre_technique', 'N/A')}` | {ts_str} |"
+                )
+        else:
+            lines.append("_No events recorded._")
+
+        lines += [
+            "",
+            "---",
+            "",
+            f"_Report generated by LogXPro SOC Engine v3.0 at {datetime.now(timezone.utc).isoformat()}_"
+        ]
+
+        md_report = "\n".join(lines)
+        return JSONResponse(content={"basket_id": basket_id, "report_markdown": md_report})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[!] Basket report error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --------------------------------------------------------------------------- #

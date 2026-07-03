@@ -57,3 +57,19 @@ CREATE TABLE IF NOT EXISTS login_baseline (
 CREATE INDEX IF NOT EXISTS idx_baskets_open_host ON incident_baskets(host_name) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS idx_basket_events_basket ON basket_events(basket_id);
 CREATE INDEX IF NOT EXISTS idx_suppression_lookup ON alert_suppression(host_name, user_name, rule_id);
+
+-- Phase 6: Audit log for SOC2/HIPAA/PCI evidence trail
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          SERIAL PRIMARY KEY,
+    event_type  TEXT NOT NULL,          -- alert_fired | response_action:* | suppression_created | playbook_fired
+    basket_id   UUID,
+    rule_id     TEXT,
+    tier        TEXT,
+    actor       TEXT DEFAULT 'system',  -- analyst name, 'engine', 'thehive_webhook', 'playbook:<id>'
+    detail      JSONB DEFAULT '{}',
+    created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_basket ON audit_log(basket_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+
