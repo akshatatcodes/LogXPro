@@ -1,11 +1,24 @@
+# Phase 1 & 2 — Core engine dependencies
 elasticsearch>=8.13.0,<9.0.0
 redis>=5.0.0
 psycopg2-binary>=2.9.0
 pyyaml>=6.0.0
-fastapi>=0.110.0
-uvicorn>=0.28.0
 requests>=2.31.0
 pydantic>=2.6.0
-pysigma>=1.0.0
-pysigma-backend-elasticsearch
 pydantic-settings>=2.2.0
+
+# Phase 2 — API server (for future dashboard backend)
+fastapi>=0.110.0
+uvicorn>=0.28.0
+
+# Phase 2 — Sigma rule processing (optional advanced backend)
+# pysigma>=1.0.0
+# pysigma-backend-elasticsearch
+
+# Phase 3 — Threat intelligence (MISP)
+# pymisp>=2.4.0
+
+# Phase 4 — AI narrative generation
+# langchain-community>=0.0.30
+# chromadb>=0.4.0
+# ollama>=0.1.0

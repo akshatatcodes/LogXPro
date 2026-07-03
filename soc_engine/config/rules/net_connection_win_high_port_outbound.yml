@@ -1,0 +1,21 @@
+title: High Port Outbound Network Connection
+id: net_connection_win_high_port_outbound
+description: Detects unusual outbound connections to high ports (>1024) which may indicate C2 beaconing or data exfiltration
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.port:
+            - 4444
+            - 4445
+            - 1337
+            - 8080
+            - 8443
+            - 9001
+    condition: selection
+tags:
+    - attack.t1071
+    - attack.t1041
+level: medium

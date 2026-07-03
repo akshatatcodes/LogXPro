@@ -1,0 +1,18 @@
+title: ProcDump Targeting LSASS
+id: proc_creation_win_procdump_lsass
+description: Detects use of ProcDump (or similar tools) targeting LSASS for credential dumping. Looks for both 'procdump' and 'lsass' in the same command line.
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "procdump"
+    lsass_target:
+        process.command_line|contains:
+            - "lsass"
+    condition: selection
+tags:
+    - attack.t1003.001
+level: critical

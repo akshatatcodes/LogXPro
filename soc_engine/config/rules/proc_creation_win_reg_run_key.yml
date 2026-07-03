@@ -1,0 +1,17 @@
+title: Registry Run Key Persistence
+id: proc_creation_win_reg_run_key
+description: Detects modification of registry Run keys for persistence via reg.exe or PowerShell
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+            - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+    condition: selection
+tags:
+    - attack.t1547.001
+    - attack.t1053.005
+level: medium

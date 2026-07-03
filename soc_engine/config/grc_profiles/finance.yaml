@@ -1,0 +1,26 @@
+client: "Finance_Client"
+industry: "financial_services"
+frameworks:
+  - "pci-dss"
+  - "sox"
+  - "nist"
+enabled_rule_groups:
+  - "endpoint"
+  - "network"
+  - "active_directory"
+  - "email"
+  - "database"
+disabled_rule_groups: []
+alert_sensitivity: "high"
+auto_response_allowed: false
+retention_days: 365
+pii_redaction: true
+log_sources_available:
+  - "windows_event_logs"
+  - "sysmon"
+  - "dns"
+  - "ad"
+  - "firewall"
+  - "proxy"
+# Finance clients require ALL rules to be active and longer retention
+# PII fields in raw_event must be redacted before storage

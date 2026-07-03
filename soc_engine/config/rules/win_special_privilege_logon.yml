@@ -1,0 +1,13 @@
+title: Special Privilege Logon
+id: win_special_privilege_logon
+description: Detects logon events that assign special privileges (Event 4672), often associated with privilege escalation
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        event.code: 4672
+    condition: selection
+tags:
+    - attack.t1078.002
+level: low

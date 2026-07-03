@@ -1,0 +1,20 @@
+title: NLTest Domain Trust Enumeration
+id: proc_creation_win_nltest_domain_trust
+description: Detects nltest.exe being used to enumerate domain trusts, a common pre-lateral movement recon technique
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.executable|contains:
+            - "nltest.exe"
+        process.command_line|contains:
+            - "/domain_trusts"
+            - "/dclist"
+            - "/trusted_domains"
+    condition: selection
+tags:
+    - attack.t1087.002
+    - attack.t1482
+level: medium

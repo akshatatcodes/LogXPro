@@ -1,0 +1,25 @@
+title: Security Service Stop via sc.exe
+id: proc_creation_win_sc_stop_security
+description: Detects sc.exe stopping Windows security-related services (often a pre-ransomware step)
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.executable|contains:
+            - "sc.exe"
+        process.command_line|contains:
+            - "stop"
+        process.command_line|contains:
+            - "WinDefend"
+            - "MpsSvc"
+            - "wscsvc"
+            - "EventLog"
+            - "VSS"
+            - "vss"
+    condition: selection
+tags:
+    - attack.t1562.001
+    - attack.t1490
+level: high

@@ -1,0 +1,18 @@
+title: VSSAdmin Delete Shadow Copies
+id: proc_creation_win_vssadmin_delete_shadows
+description: Detects deletion of shadow copies via vssadmin, a common ransomware pre-step to prevent recovery
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.executable|contains:
+            - "vssadmin.exe"
+        process.command_line|contains:
+            - "delete"
+            - "shadows"
+    condition: selection
+tags:
+    - attack.t1490
+level: critical

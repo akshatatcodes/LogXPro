@@ -1,0 +1,27 @@
+client: "Healthcare_Client"
+industry: "healthcare"
+frameworks:
+  - "hipaa"
+  - "hitech"
+  - "nist"
+enabled_rule_groups:
+  - "endpoint"
+  - "network"
+  - "active_directory"
+  - "email"
+  - "clinical_systems"
+disabled_rule_groups:
+  - "pci"
+alert_sensitivity: "high"
+auto_response_allowed: false
+retention_days: 2190    # 6 years for HIPAA compliance
+pii_redaction: true
+phi_protection: true    # Protected Health Information
+log_sources_available:
+  - "windows_event_logs"
+  - "sysmon"
+  - "dns"
+  - "ad"
+  - "ehr_system"
+# Healthcare clients have strict PHI requirements.
+# All raw events containing patient data must be flagged.

@@ -1,0 +1,22 @@
+title: WMI Spawning Child Process
+id: proc_creation_win_wmi_spawns_process
+description: Detects WMI (WmiPrvSE.exe) spawning an unusual child process, common technique for lateral movement
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.parent.executable|contains:
+            - "WmiPrvSE.exe"
+        process.executable|contains:
+            - "cmd.exe"
+            - "powershell.exe"
+            - "wscript.exe"
+            - "cscript.exe"
+            - "mshta.exe"
+    condition: selection
+tags:
+    - attack.t1047
+    - attack.t1021.002
+level: high

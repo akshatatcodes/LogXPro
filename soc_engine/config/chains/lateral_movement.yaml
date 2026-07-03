@@ -1,0 +1,31 @@
+chain_id: "chain_002"
+name: "Credential Dumping and Lateral Movement"
+description: "Attacker escalates privileges or uses stolen credentials to dump LSASS memory hashes, then uses those credentials to move laterally across the network via SMB or WMI."
+stages:
+  - stage: 1
+    name: "Privilege Escalation"
+    mitre: "T1078.002"
+    sigma_rules:
+      - "win_special_privilege_logon"
+      - "win_admin_account_creation"
+  - stage: 2
+    name: "Credential Dumping"
+    mitre: "T1003.001"
+    sigma_rules:
+      - "proc_creation_win_lsass_access"
+      - "proc_creation_win_mimikatz"
+      - "proc_creation_win_procdump_lsass"
+  - stage: 3
+    name: "Lateral Movement via SMB/WMI"
+    mitre: "T1021.002"
+    sigma_rules:
+      - "net_connection_win_smb_lateral"
+      - "proc_creation_win_wmi_spawns_process"
+  - stage: 4
+    name: "Discovery / Reconnaissance"
+    mitre: "T1087.002"
+    sigma_rules:
+      - "proc_creation_win_net_user_enum"
+      - "proc_creation_win_nltest_domain_trust"
+time_window_minutes: 15
+min_stages_for_alert: 2

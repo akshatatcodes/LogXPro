@@ -1,0 +1,14 @@
+title: Multiple Failed Logon Attempts
+id: win_failed_logon_multiple
+description: Detects multiple failed Windows logon events (Event 4625) which may indicate password spraying or brute force
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        event.code: 4625
+    condition: selection
+tags:
+    - attack.t1110
+    - attack.t1078
+level: medium

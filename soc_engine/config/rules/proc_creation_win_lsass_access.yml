@@ -1,0 +1,18 @@
+title: LSASS Memory Access
+id: proc_creation_win_lsass_access
+description: Detects process access to LSASS memory (credential dumping via procdump, task manager dump, etc.)
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "lsass"
+    filter:
+        process.executable|contains:
+            - "MsMpEng.exe"
+    condition: selection and not filter
+tags:
+    - attack.t1003.001
+level: critical

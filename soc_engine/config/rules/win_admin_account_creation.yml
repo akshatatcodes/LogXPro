@@ -1,0 +1,14 @@
+title: New Local Administrator Account Created
+id: win_admin_account_creation
+description: Detects creation of a new local administrator account, which may indicate attacker establishing persistence or privilege escalation
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        event.code: 4720
+    condition: selection
+tags:
+    - attack.t1078.002
+    - attack.t1136.001
+level: medium

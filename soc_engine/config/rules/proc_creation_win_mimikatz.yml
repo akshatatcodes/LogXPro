@@ -1,0 +1,21 @@
+title: Mimikatz Keyword in Command Line
+id: proc_creation_win_mimikatz
+description: Detects Mimikatz execution via common command line keywords used in credential dumping
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "sekurlsa"
+            - "lsadump"
+            - "privilege::debug"
+            - "mimikatz"
+            - "kerberos::list"
+            - "pass-the-hash"
+    condition: selection
+tags:
+    - attack.t1003.001
+    - attack.t1550.002
+level: critical

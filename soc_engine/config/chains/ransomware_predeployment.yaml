@@ -1,0 +1,27 @@
+chain_id: "chain_003"
+name: "Ransomware Pre-Deployment"
+description: >
+  Ransomware kill-chain: attacker disables defenses (AV + VSS service),
+  deletes shadow copies to prevent recovery, then drops and executes
+  the ransomware payload via PowerShell.
+stages:
+  - stage: 1
+    name: "Defense Evasion"
+    mitre: "T1562.001"
+    sigma_rules:
+      - "proc_creation_win_defender_disable"
+      - "proc_creation_win_sc_stop_security"
+  - stage: 2
+    name: "Inhibit System Recovery"
+    mitre: "T1490"
+    sigma_rules:
+      - "proc_creation_win_vssadmin_delete_shadows"
+      - "proc_creation_win_wmic_shadowcopy_delete"
+  - stage: 3
+    name: "Ransomware Payload Execution"
+    mitre: "T1059.001"
+    sigma_rules:
+      - "proc_creation_win_powershell_encoded_cmd"
+      - "proc_creation_win_powershell_download"
+time_window_minutes: 20
+min_stages_for_alert: 2

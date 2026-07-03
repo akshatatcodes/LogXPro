@@ -1,0 +1,18 @@
+title: WMIC Shadow Copy Deletion
+id: proc_creation_win_wmic_shadowcopy_delete
+description: Detects WMIC command used to delete shadow copies (common ransomware technique)
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.executable|contains:
+            - "wmic.exe"
+        process.command_line|contains:
+            - "shadowcopy"
+            - "delete"
+    condition: selection
+tags:
+    - attack.t1490
+level: critical

@@ -1,0 +1,22 @@
+title: Net User Enumeration
+id: proc_creation_win_net_user_enum
+description: Detects use of net.exe or net1.exe for user/group enumeration (Active Directory reconnaissance)
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.executable|contains:
+            - "net.exe"
+            - "net1.exe"
+        process.command_line|contains:
+            - "user /domain"
+            - "group /domain"
+            - "localgroup"
+            - "accounts"
+    condition: selection
+tags:
+    - attack.t1087.002
+    - attack.t1069
+level: medium

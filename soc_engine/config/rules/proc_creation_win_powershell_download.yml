@@ -1,0 +1,22 @@
+title: PowerShell Download Cradle
+id: proc_creation_win_powershell_download
+description: Detects PowerShell used to download files from the internet via common download cradle patterns
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "DownloadString"
+            - "DownloadFile"
+            - "WebClient"
+            - "Invoke-WebRequest"
+            - "iwr "
+            - "wget "
+            - "curl "
+    condition: selection
+tags:
+    - attack.t1059.001
+    - attack.t1105
+level: high

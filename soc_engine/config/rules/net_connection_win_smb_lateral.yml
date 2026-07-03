@@ -1,0 +1,19 @@
+title: SMB Lateral Movement - Remote Admin Share Access
+id: net_connection_win_smb_lateral
+description: Detects outbound SMB connections (port 445) from non-system processes, which may indicate lateral movement via administrative shares or pass-the-hash
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.port: 445
+    filter:
+        process.executable|contains:
+            - "System"
+            - "svchost.exe"
+    condition: selection and not filter
+tags:
+    - attack.t1021.002
+    - attack.t1550.002
+level: high

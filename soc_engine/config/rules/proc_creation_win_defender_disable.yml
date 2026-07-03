@@ -1,0 +1,18 @@
+title: Windows Defender Disabled via PowerShell or Registry
+id: proc_creation_win_defender_disable
+description: Detects attempts to disable Windows Defender real-time protection via PowerShell or registry
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 1
+        process.command_line|contains:
+            - "Set-MpPreference -DisableRealtimeMonitoring"
+            - "DisableAntiSpyware"
+            - "DisableAntiVirus"
+            - "Add-MpPreference -ExclusionPath"
+    condition: selection
+tags:
+    - attack.t1562.001
+level: high

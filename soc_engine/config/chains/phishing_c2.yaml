@@ -1,16 +1,30 @@
 chain_id: "chain_001"
 name: "Phishing to C2"
+description: "Attacker uses credential abuse or phishing for initial access, runs encoded PowerShell, establishes persistence via scheduled task, then beacons out to a C2 server."
 stages:
   - stage: 1
+    name: "Initial Access"
     mitre: "T1078"
-    sigma_rules: ["win_system_rdp_bruteforce"]
+    sigma_rules:
+      - "win_system_rdp_bruteforce"
+      - "win_failed_logon_multiple"
   - stage: 2
+    name: "Execution"
     mitre: "T1059.001"
-    sigma_rules: ["proc_creation_win_powershell_encoded_cmd"]
+    sigma_rules:
+      - "proc_creation_win_powershell_encoded_cmd"
+      - "proc_creation_win_powershell_download"
   - stage: 3
+    name: "Persistence"
     mitre: "T1053.005"
-    sigma_rules: ["proc_creation_win_scheduled_task_creation"]
+    sigma_rules:
+      - "proc_creation_win_scheduled_task_creation"
+      - "proc_creation_win_reg_run_key"
   - stage: 4
+    name: "Command and Control"
     mitre: "T1071"
-    sigma_rules: ["net_connection_win_c2_potential"]
+    sigma_rules:
+      - "net_connection_win_c2_potential"
+      - "net_connection_win_high_port_outbound"
 time_window_minutes: 10
+min_stages_for_alert: 2
