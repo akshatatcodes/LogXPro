@@ -229,10 +229,25 @@ class SOCEngine:
             alert_type, tier = should_fire_alert(basket, rule, best_chain or {}, eval_res)
 
             if alert_type:
+                # Phase 3: Run enrichment for Tier 2 or above (Medium, High, Critical)
+                enrichment_data = None
+                if tier in ["medium", "high", "critical"]:
+                    from soc_engine.enrichment import enrich_basket
+                    try:
+                        conn = db.get_db_connection()
+                        try:
+                            enrichment_data = enrich_basket(conn, basket_id)
+                        finally:
+                            conn.close()
+                    except Exception as e:
+                        print(f"[!] Error running enrichment orchestrator: {e}")
+
                 banner = format_alert_banner(alert_type, tier, basket, eval_res)
                 print(banner)
 
                 payload = build_alert_payload(basket, eval_res, alert_type, tier, rule)
+                if enrichment_data:
+                    payload["enrichment"] = enrichment_data
                 self._handle_alert(payload)
 
     def _handle_alert(self, payload: dict):
@@ -370,16 +385,33 @@ class SOCEngine:
                     f"Stages Matched: {len(matched_stages)}/{total_stages}"
                 )
 
+                alert_type = None
+                tier = None
                 if len(matched_stages) >= min_stages:
-                    from soc_engine.detection.tiering import score_to_tier, format_alert_banner
+                    from soc_engine.detection.tiering import score_to_tier
                     tier = score_to_tier(confidence)
                     if tier:
-                        banner = format_alert_banner("tier_chain", tier, mock_basket, eval_res)
-                        print(banner)
+                        alert_type = "tier_chain"
                 elif rule["level"] == "critical":
-                    from soc_engine.detection.tiering import format_alert_banner
-                    banner = format_alert_banner("tier0_instant", "critical", mock_basket, eval_res)
+                    alert_type = "tier0_instant"
+                    tier = "critical"
+
+                if alert_type:
+                    from soc_engine.detection.tiering import format_alert_banner, build_alert_payload
+                    banner = format_alert_banner(alert_type, tier, mock_basket, eval_res)
                     print(banner)
+
+                    payload = build_alert_payload(mock_basket, eval_res, alert_type, tier, rule)
+
+                    # Phase 3: Run enrichment for Tier 2 or above (or instant critical)
+                    if tier in ["medium", "high", "critical"]:
+                        from soc_engine.enrichment import enrich_basket
+                        # In simulation, we don't have real pg_conn, pass None.
+                        # Also, mock_events_store holds all the events for the mock basket.
+                        enrichment_data = enrich_basket(None, mock_basket["basket_id"], mock_events_store)
+                        payload["enrichment"] = enrichment_data
+
+                    self._handle_alert(payload)
 
         print("\n" + "=" * 60)
         print("[+] Simulation complete.")
@@ -499,6 +531,7 @@ class SOCEngine:
                         "executable": "C:\\Temp\\mimikatz.exe",
                         "command_line": "mimikatz.exe sekurlsa::logonpasswords",
                     },
+                    "Hashes": "SHA256=4b6842bf8276eac8677250a98956ff34d5678ab3e456cde90f123456789abcde",
                 },
             },
             {

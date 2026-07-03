@@ -16,7 +16,7 @@ uvicorn>=0.28.0
 # pysigma-backend-elasticsearch
 
 # Phase 3 — Threat intelligence (MISP)
-# pymisp>=2.4.0
+pymisp>=2.4.0
 
 # Phase 4 — AI narrative generation
 # langchain-community>=0.0.30
