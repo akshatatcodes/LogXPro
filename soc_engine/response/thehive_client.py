@@ -49,6 +49,9 @@ def create_case(alert: dict) -> dict | None:
             f"confidence:{confidence}%",
             f"host:{host}",
             f"tier:{tier}",
+            f"basket:{alert.get('basket_id')}",
+            f"rule:{alert.get('triggering_rule', {}).get('id')}",
+            f"user:{alert.get('user_name')}",
         ],
         "tasks": [
             {"title": "Review AI-generated attack timeline"},

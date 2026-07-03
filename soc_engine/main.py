@@ -44,6 +44,36 @@ class SOCEngine:
         if not self.simulate:
             self.init_connections()
 
+    def _redact_pii_fields(self, event_dict: dict) -> dict:
+        """Redacts PII fields from the log event prior to database/ES storage."""
+        import copy
+        copied = copy.deepcopy(event_dict)
+        
+        # Redact user details
+        if "user" in copied and isinstance(copied["user"], dict):
+            if "name" in copied["user"]:
+                copied["user"]["name"] = "[REDACTED_USER]"
+        if "user_name" in copied:
+            copied["user_name"] = "[REDACTED_USER]"
+        if "TargetUserName" in copied:
+            copied["TargetUserName"] = "[REDACTED_USER]"
+            
+        # Redact source/destination IPs
+        if "source" in copied and isinstance(copied["source"], dict):
+            if "ip" in copied["source"]:
+                copied["source"]["ip"] = "[REDACTED_IP]"
+        if "destination" in copied and isinstance(copied["destination"], dict):
+            if "ip" in copied["destination"]:
+                copied["destination"]["ip"] = "[REDACTED_IP]"
+        if "source_ip" in copied:
+            copied["source_ip"] = "[REDACTED_IP]"
+        if "dest_ip" in copied:
+            copied["dest_ip"] = "[REDACTED_IP]"
+        if "IpAddress" in copied:
+            copied["IpAddress"] = "[REDACTED_IP]"
+            
+        return copied
+
     # ------------------------------------------------------------------ #
     # Startup                                                               #
     # ------------------------------------------------------------------ #
@@ -161,113 +191,166 @@ class SOCEngine:
             time.sleep(settings.POLL_INTERVAL)
 
     def process_log(self, event: dict):
-        """Processes a single log event: Sigma matching → basket → chain eval → alert."""
-        matches = self.sigma_matcher.match_event(event)
-
-        for rule in matches:
-            rule_id = rule["id"]
-            host_name = event.get("host", {}).get("name", "UNKNOWN_HOST")
+        """Processes a single log event: Anomaly detection, Sigma matching → basket → chain eval → alert."""
+        # 1. Login Anomaly check (Phase 5)
+        event_code = event.get("event", {}).get("code")
+        if event_code in [4624, 4672] and not self.simulate:
             user_name = event.get("user", {}).get("name")
-
-            # GRC suppression check
-            rule_group = rule.get("group")
-            disabled_groups = self.grc_profile.get("disabled_rule_groups", [])
-            rule_tags = [t.lower() for t in rule.get("tags", [])]
-            is_suppressed = False
-            if rule_group and rule_group in disabled_groups:
-                is_suppressed = True
-            else:
-                for dg in disabled_groups:
-                    if dg.lower() in rule_tags or f"attack.{dg.lower()}" in rule_tags:
-                        is_suppressed = True
-                        rule_group = dg
-                        break
-
-            if is_suppressed:
-                print(f"[-] GRC suppressed rule {rule_id} (group '{rule_group}' disabled for this client)")
-                continue
-
-            # Alert suppression table check
-            if db.is_alert_suppressed(host_name, user_name, rule_id):
-                print(f"[-] Suppressed: {rule_id} on {host_name}/{user_name}")
-                continue
-
-            print(
-                f"\n[!] RULE HIT: '{rule['title']}' "
-                f"(Level: {rule['level'].upper()}) | "
-                f"Host: {host_name} | User: {user_name or 'N/A'}"
-            )
-
-            # Basket management
             source_ip = event.get("source", {}).get("ip")
-            basket, is_new = basket_manager.find_or_create_basket(
-                host_name, user_name, source_ip
-            )
-            basket_id = str(basket["basket_id"])
-
-            mitre_id = rule["mitre_techniques"][0] if rule["mitre_techniques"] else None
-            basket_manager.add_event(
-                basket_id=basket_id,
-                event_type=rule["title"],
-                raw_event={**event, "rule_id": rule_id},
-                mitre_technique=mitre_id
-            )
-            print(f"    [+] Event → basket {basket_id[:8]}... (new={is_new})")
-
-            # Chain evaluation
-            eval_res = evaluate_basket(basket_id, self.chains)
-
-            if eval_res["confidence"] > 0:
-                print(
-                    f"    [>>>] Chain: '{eval_res['chain_name']}' | "
-                    f"Confidence: {eval_res['confidence']}% | "
-                    f"Stages: {len(eval_res['matched_stages'])}"
-                )
-
-            # Determine the best chain for tiering
-            best_chain = self._find_chain(eval_res.get("chain_id"))
-            alert_type, tier = should_fire_alert(basket, rule, best_chain or {}, eval_res)
-
-            if alert_type:
-                # Phase 3: Run enrichment for Tier 2 or above (Medium, High, Critical)
-                enrichment_data = None
-                if tier in ["medium", "high", "critical"]:
-                    from soc_engine.enrichment import enrich_basket
+            if user_name and source_ip:
+                try:
+                    conn = db.get_db_connection()
                     try:
-                        conn = db.get_db_connection()
-                        try:
-                            enrichment_data = enrich_basket(conn, basket_id)
-                        finally:
-                            conn.close()
-                    except Exception as e:
-                        print(f"[!] Error running enrichment orchestrator: {e}")
+                        ts_str = event.get("@timestamp")
+                        from datetime import datetime, timezone
+                        if ts_str:
+                            try:
+                                login_time = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            except Exception:
+                                login_time = datetime.now(timezone.utc)
+                        else:
+                            login_time = datetime.now(timezone.utc)
+                            
+                        source_country = event.get("source", {}).get("country", "US") or "US"
+                        
+                        from soc_engine.anomaly.baseline_checker import check_anomaly, update_baseline
+                        anomalies = check_anomaly(conn, user_name, source_ip, source_country, login_time)
+                        update_baseline(conn, user_name, source_ip, source_country, login_time.hour)
+                        
+                        for anomaly in anomalies:
+                            print(f"\n[!] ANOMALY DETECTED: {anomaly['description']} (Confidence: {anomaly['confidence']}%)")
+                            anomaly_rule = {
+                                "id": f"win_login_anomaly_{anomaly['type']}",
+                                "title": f"Login Anomaly: {anomaly['type'].replace('_', ' ').title()}",
+                                "level": "medium" if anomaly["confidence"] >= 40 else "low",
+                                "mitre_techniques": ["T1078"],
+                                "group": "active_directory"
+                            }
+                            self._process_rule_match(event, anomaly_rule)
+                    finally:
+                        conn.close()
+                except Exception as db_err:
+                    print(f"[!] Error checking login anomaly: {db_err}")
 
-                banner = format_alert_banner(alert_type, tier, basket, eval_res)
-                print(banner)
+        # 2. Sigma Rule matching
+        matches = self.sigma_matcher.match_event(event)
+        for rule in matches:
+            self._process_rule_match(event, rule)
 
-                payload = build_alert_payload(basket, eval_res, alert_type, tier, rule)
-                if enrichment_data:
-                    payload["enrichment"] = enrichment_data
+    def _process_rule_match(self, event: dict, rule: dict):
+        """Processes a specific rule match (Sigma or Anomaly) through the basket and alert pipeline."""
+        rule_id = rule["id"]
+        host_name = event.get("host", {}).get("name", "UNKNOWN_HOST")
+        user_name = event.get("user", {}).get("name")
 
-                # Phase 4: Run AI Narrative Generator
-                if tier in ["medium", "high", "critical"]:
-                    from soc_engine.ai import generate_incident_narrative
+        # GRC suppression check
+        rule_group = rule.get("group")
+        disabled_groups = self.grc_profile.get("disabled_rule_groups", [])
+        rule_tags = [t.lower() for t in rule.get("tags", [])]
+        is_suppressed = False
+        if rule_group and rule_group in disabled_groups:
+            is_suppressed = True
+        else:
+            for dg in disabled_groups:
+                if dg.lower() in rule_tags or f"attack.{dg.lower()}" in rule_tags:
+                    is_suppressed = True
+                    rule_group = dg
+                    break
+
+        if is_suppressed:
+            print(f"[-] GRC suppressed rule {rule_id} (group '{rule_group}' disabled for this client)")
+            return
+
+        # Alert suppression table check
+        if not self.simulate:
+            try:
+                if db.is_alert_suppressed(host_name, user_name, rule_id):
+                    print(f"[-] Suppressed: {rule_id} on {host_name}/{user_name}")
+                    return
+            except Exception as se_err:
+                print(f"[!] Error checking alert suppression: {se_err}")
+
+        print(
+            f"\n[!] RULE HIT: '{rule['title']}' "
+            f"(Level: {rule['level'].upper()}) | "
+            f"Host: {host_name} | User: {user_name or 'N/A'}"
+        )
+
+        # Redact raw_event for storage if PII redaction is enabled in GRC profile
+        store_event = event
+        if self.grc_profile.get("pii_redaction", False):
+            store_event = self._redact_pii_fields(event)
+
+        # Basket management
+        source_ip = event.get("source", {}).get("ip")
+        basket, is_new = basket_manager.find_or_create_basket(
+            host_name, user_name, source_ip
+        )
+        basket_id = str(basket["basket_id"])
+
+        mitre_id = rule["mitre_techniques"][0] if rule["mitre_techniques"] else None
+        basket_manager.add_event(
+            basket_id=basket_id,
+            event_type=rule["title"],
+            raw_event={**store_event, "rule_id": rule_id},
+            mitre_technique=mitre_id
+        )
+        print(f"    [+] Event → basket {basket_id[:8]}... (new={is_new})")
+
+        # Chain evaluation
+        eval_res = evaluate_basket(basket_id, self.chains)
+
+        if eval_res["confidence"] > 0:
+            print(
+                f"    [>>>] Chain: '{eval_res['chain_name']}' | "
+                f"Confidence: {eval_res['confidence']}% | "
+                f"Stages: {len(eval_res['matched_stages'])}"
+            )
+
+        # Determine the best chain for tiering
+        best_chain = self._find_chain(eval_res.get("chain_id"))
+        alert_type, tier = should_fire_alert(basket, rule, best_chain or {}, eval_res)
+
+        if alert_type:
+            # Phase 3: Run enrichment for Tier 2 or above (Medium, High, Critical)
+            enrichment_data = None
+            if tier in ["medium", "high", "critical"]:
+                from soc_engine.enrichment import enrich_basket
+                try:
+                    conn = db.get_db_connection()
                     try:
-                        narrative = generate_incident_narrative(
-                            basket,
-                            enrichment_data or {},
-                            best_chain or {}
-                        )
-                        payload["ai_narrative"] = narrative
-                    except Exception as e:
-                        print(f"[!] Error running AI narrator: {e}")
+                        enrichment_data = enrich_basket(conn, basket_id)
+                    finally:
+                        conn.close()
+                except Exception as e:
+                    print(f"[!] Error running enrichment orchestrator: {e}")
 
-                self._handle_alert(payload)
+            banner = format_alert_banner(alert_type, tier, basket, eval_res)
+            print(banner)
+
+            payload = build_alert_payload(basket, eval_res, alert_type, tier, rule)
+            if enrichment_data:
+                payload["enrichment"] = enrichment_data
+
+            # Phase 4: Run AI Narrative Generator
+            if tier in ["medium", "high", "critical"]:
+                from soc_engine.ai import generate_incident_narrative
+                try:
+                    narrative = generate_incident_narrative(
+                        basket,
+                        enrichment_data or {},
+                        best_chain or {}
+                    )
+                    payload["ai_narrative"] = narrative
+                except Exception as e:
+                    print(f"[!] Error running AI narrator: {e}")
+
+            self._handle_alert(payload)
 
     def _handle_alert(self, payload: dict):
         """
-        Alert dispatch: prints structured JSON and indexes to Elasticsearch 'soc-alerts'.
-        Phase 5 will forward to TheHive.
+        Alert dispatch: prints structured JSON, indexes to Elasticsearch 'soc-alerts',
+        and forwards high/critical alerts to TheHive.
         """
         import json
         print(f"    [ALERT PAYLOAD] {json.dumps(payload, indent=2, default=str)}")
@@ -279,6 +362,15 @@ class SOCEngine:
                 print(f"    [+] Alert successfully indexed to Elasticsearch 'soc-alerts' (ID: {resp.get('_id')})")
             except Exception as e:
                 print(f"[!] Failed to index alert to Elasticsearch 'soc-alerts': {e}")
+
+        # Phase 5: Forward High and Critical alerts to TheHive SOAR
+        if payload.get("tier") in ["high", "critical"]:
+            from soc_engine.response.thehive_client import create_case
+            try:
+                print(f"[*] Forwarding {payload.get('tier').upper()} alert to TheHive...")
+                create_case(payload)
+            except Exception as e:
+                print(f"[!] Failed to forward alert to TheHive: {e}")
 
     def _find_chain(self, chain_id: str | None) -> dict | None:
         if not chain_id:
@@ -337,13 +429,33 @@ class SOCEngine:
             print(f"\n>>> [{i}/{len(sim_events)}] {desc}")
             time.sleep(1.5)
 
-            matches = self.sigma_matcher.match_event(log)
+            # Check for logon anomaly in simulation (Phase 5)
+            sim_rules_to_eval = []
+            event_code = log.get("event", {}).get("code")
+            if event_code in [4624, 4672]:
+                anomaly_rule = {
+                    "id": "win_login_anomaly_first_seen_ip",
+                    "title": "Login Anomaly: First Seen Ip",
+                    "level": "medium",
+                    "mitre_techniques": ["T1078"],
+                    "group": "active_directory"
+                }
+                print(f"    [!] ANOMALY DETECTED: First login from {log.get('source', {}).get('ip')} for user {log.get('user', {}).get('name')} (Confidence: 30%)")
+                sim_rules_to_eval.append(anomaly_rule)
 
-            if not matches:
+            matches = self.sigma_matcher.match_event(log)
+            sim_rules_to_eval.extend(matches)
+
+            if not sim_rules_to_eval:
                 print(f"    [-] No Sigma rule matched for this event.")
                 continue
 
-            for rule in matches:
+            # Redact raw_event in simulation if GRC profile specifies it (Phase 5)
+            store_log = log
+            if self.grc_profile.get("pii_redaction", False):
+                store_log = self._redact_pii_fields(log)
+
+            for rule in sim_rules_to_eval:
                 rule_id = rule["id"]
                 print(f"    [!] RULE: '{rule['title']}' (Level: {rule['level'].upper()})")
 
@@ -352,8 +464,8 @@ class SOCEngine:
                     "event_id": f"SIM-EVT-{i:03d}",
                     "basket_id": mock_basket["basket_id"],
                     "event_type": rule["title"],
-                    "raw_event": {**log, "rule_id": rule_id},
-                    "mitre_technique": step["mitre"],
+                    "raw_event": {**store_log, "rule_id": rule_id},
+                    "mitre_technique": step["mitre"] if rule_id != "win_login_anomaly_first_seen_ip" else "T1078",
                     "ingestion_time": datetime.now(timezone.utc),
                 }
                 mock_events_store.append(evt_record)
