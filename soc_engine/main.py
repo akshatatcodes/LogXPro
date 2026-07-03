@@ -137,6 +137,12 @@ class SOCEngine:
 
         while True:
             try:
+                # Expire old open baskets
+                try:
+                    db.expire_old_open_baskets(settings.BASKET_EXPIRY_MINUTES)
+                except Exception as ex:
+                    print(f"[!] Error running open basket cleanup: {ex}")
+
                 now = datetime.now(timezone.utc)
                 events = reader.get_new_events(start_time=last_polled, end_time=now)
 
@@ -164,11 +170,21 @@ class SOCEngine:
             user_name = event.get("user", {}).get("name")
 
             # GRC suppression check
-            rule_tags = rule.get("tags", [])
-            if "pci" in rule_tags and "pci" in self.grc_profile.get(
-                "disabled_rule_groups", []
-            ):
-                print(f"[-] GRC suppressed rule {rule_id} (PCI disabled for this client)")
+            rule_group = rule.get("group")
+            disabled_groups = self.grc_profile.get("disabled_rule_groups", [])
+            rule_tags = [t.lower() for t in rule.get("tags", [])]
+            is_suppressed = False
+            if rule_group and rule_group in disabled_groups:
+                is_suppressed = True
+            else:
+                for dg in disabled_groups:
+                    if dg.lower() in rule_tags or f"attack.{dg.lower()}" in rule_tags:
+                        is_suppressed = True
+                        rule_group = dg
+                        break
+
+            if is_suppressed:
+                print(f"[-] GRC suppressed rule {rule_id} (group '{rule_group}' disabled for this client)")
                 continue
 
             # Alert suppression table check
@@ -190,7 +206,12 @@ class SOCEngine:
             basket_id = str(basket["basket_id"])
 
             mitre_id = rule["mitre_techniques"][0] if rule["mitre_techniques"] else None
-            basket_manager.add_event(basket_id, rule_id, event, mitre_id)
+            basket_manager.add_event(
+                basket_id=basket_id,
+                event_type=rule["title"],
+                raw_event={**event, "rule_id": rule_id},
+                mitre_technique=mitre_id
+            )
             print(f"    [+] Event → basket {basket_id[:8]}... (new={is_new})")
 
             # Chain evaluation
@@ -294,8 +315,8 @@ class SOCEngine:
                 evt_record = {
                     "event_id": f"SIM-EVT-{i:03d}",
                     "basket_id": mock_basket["basket_id"],
-                    "event_type": rule_id,
-                    "raw_event": log,
+                    "event_type": rule["title"],
+                    "raw_event": {**log, "rule_id": rule_id},
                     "mitre_technique": step["mitre"],
                     "ingestion_time": datetime.now(timezone.utc),
                 }
@@ -313,7 +334,8 @@ class SOCEngine:
 
                     for ev in mock_events_store:
                         ev_mitre = ev.get("mitre_technique", "")
-                        ev_rule = ev.get("event_type", "")
+                        raw_evt = ev.get("raw_event") or {}
+                        ev_rule = raw_evt.get("rule_id") or ev.get("event_type", "")
                         if ev_mitre == mitre_id or ev_rule in rules_list:
                             matched_stages.append({
                                 "stage": stage_num,
@@ -434,7 +456,7 @@ class SOCEngine:
                 },
             },
             {
-                "description": "Stage 4 — Outbound C2 Beacon to 5.5.5.5:443 (T1071)",
+                "description": "Stage 4 — Outbound C2 Beacon to 203.0.113.99:443 (T1071)",
                 "mitre": "T1071",
                 "rule_id": "net_connection_win_c2_potential",
                 "log": {
@@ -442,7 +464,7 @@ class SOCEngine:
                     "host": {"name": "DESKTOP-VICTIM"},
                     "user": {"name": "Administrator"},
                     "event": {"code": 3},
-                    "destination": {"ip": "5.5.5.5", "port": 443},
+                    "destination": {"ip": "203.0.113.99", "port": 443},
                     "source": {"ip": "192.168.1.100"},
                 },
             },

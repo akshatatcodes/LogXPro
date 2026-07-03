@@ -1,7 +1,7 @@
 winlogbeat.event_logs:
   - name: Microsoft-Windows-Sysmon/Operational
   - name: Security
-    event_id: 4624, 4625
+    event_id: 4624, 4625, 4672, 4720
 
 output.logstash:
   hosts: ["localhost:5044"]

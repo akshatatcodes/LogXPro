@@ -139,7 +139,7 @@ def create_suppression(host_name: str = None, user_name: str = None, rule_id: st
             cur.execute(
                 """
                 INSERT INTO alert_suppression (host_name, user_name, rule_id, suppressed_by, expires_at)
-                VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s second')
+                VALUES (%s, %s, %s, %s, NOW() + make_interval(secs => %s))
                 RETURNING *;
                 """,
                 (host_name, user_name, rule_id, suppressed_by, expires_in_seconds)
@@ -147,5 +147,47 @@ def create_suppression(host_name: str = None, user_name: str = None, rule_id: st
             suppression = cur.fetchone()
             conn.commit()
             return suppression
+    finally:
+        conn.close()
+
+def get_open_basket_for_host(host_name: str, user_name: str = None):
+    """Retrieves the active open basket for the host name and user name context."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM incident_baskets
+                WHERE host_name = %s
+                  AND user_name IS NOT DISTINCT FROM %s
+                  AND status = 'open'
+                LIMIT 1;
+                """,
+                (host_name, user_name)
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+def expire_old_open_baskets(max_age_minutes: int = 10):
+    """Closes any open basket older than max_age_minutes with no new activity."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE incident_baskets
+                SET status = 'expired', updated_at = NOW()
+                WHERE status = 'open'
+                  AND updated_at < NOW() - make_interval(mins => %s);
+                """,
+                (max_age_minutes,)
+            )
+            count = cur.rowcount
+            conn.commit()
+            if count:
+                print(f"[*] Expired {count} stale open basket(s).")
+    except Exception as e:
+        print(f"[!] Error expiring stale open baskets: {e}")
     finally:
         conn.close()

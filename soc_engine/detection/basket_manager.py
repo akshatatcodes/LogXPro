@@ -12,17 +12,18 @@ redis_client = redis.Redis(
     decode_responses=True
 )
 
-def get_redis_basket_key(host_name: str) -> str:
-    return f"active_basket:{host_name}"
+def get_redis_basket_key(host_name: str, user_name: str = None) -> str:
+    user_part = user_name or "unknown"
+    return f"active_basket:{host_name}:{user_part}"
 
 def find_or_create_basket(host_name: str, user_name: str = None, source_ip: str = None) -> tuple:
     """
-    Finds an existing open basket for the given host_name or creates a new one.
+    Finds an existing open basket for the given host_name and user_name or creates a new one.
     Uses Redis as a fast cache and PostgreSQL as the source of truth.
     Returns: (basket, is_new)
     """
     # 1. Check Redis cache first
-    redis_key = get_redis_basket_key(host_name)
+    redis_key = get_redis_basket_key(host_name, user_name)
     try:
         basket_id = redis_client.get(redis_key)
     except Exception:
@@ -42,16 +43,15 @@ def find_or_create_basket(host_name: str, user_name: str = None, source_ip: str 
             
     # 2. Check DB if not cached in Redis (e.g. after a restart)
     try:
-        open_baskets = db.get_open_baskets()
-        for ob in open_baskets:
-            if ob['host_name'] == host_name:
-                # Found in DB, populate Redis cache and slide TTL
-                basket_id = str(ob['basket_id'])
-                try:
-                    redis_client.setex(redis_key, settings.BASKET_EXPIRY_MINUTES * 60, basket_id)
-                except Exception:
-                    pass
-                return ob, False
+        ob = db.get_open_basket_for_host(host_name, user_name)
+        if ob:
+            # Found in DB, populate Redis cache and slide TTL
+            basket_id = str(ob['basket_id'])
+            try:
+                redis_client.setex(redis_key, settings.BASKET_EXPIRY_MINUTES * 60, basket_id)
+            except Exception:
+                pass
+            return ob, False
     except Exception:
         pass
             

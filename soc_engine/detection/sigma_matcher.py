@@ -52,6 +52,7 @@ class SigmaMatcher:
                             "detection": rule_content["detection"],
                             "logsource": rule_content.get("logsource", {}),
                             "tags":      rule_content.get("tags", []),
+                            "group":     self._determine_rule_group(rule_content, f.name),
                             "mitre_techniques": self._extract_mitre_tags(
                                 rule_content.get("tags", [])
                             ),
@@ -60,6 +61,51 @@ class SigmaMatcher:
                 print(f"[!] Error loading Sigma rule {f}: {e}")
 
         print(f"[*] Loaded {len(self.rules)} Sigma rules.")
+
+    def _determine_rule_group(self, rule_content: dict, file_name: str) -> str:
+        """
+        Dynamically classifies a rule into a group (endpoint, network, active_directory, pci, etc.)
+        based on explicit 'group' field, tags, filename, or logsource fields.
+        """
+        # 1. Explicit group field in YAML
+        if "group" in rule_content:
+            return str(rule_content["group"]).lower()
+
+        # 2. Check tags for group keywords
+        tags = [t.lower() for t in rule_content.get("tags", [])]
+        for tag in tags:
+            if "pci" in tag:
+                return "pci"
+            if "ad" in tag or "active_directory" in tag:
+                return "active_directory"
+            if "email" in tag:
+                return "email"
+            if "network" in tag:
+                return "network"
+            if "endpoint" in tag:
+                return "endpoint"
+
+        # 3. Check filename prefix/suffix
+        fn = file_name.lower()
+        if fn.startswith("net_connection") or fn.startswith("dns") or "network" in fn:
+            return "network"
+        if "ad" in fn or "active_directory" in fn or fn.startswith("win_special_privilege") or fn.startswith("win_admin"):
+            return "active_directory"
+
+        # 4. Check logsource details
+        logsource = rule_content.get("logsource", {})
+        service = str(logsource.get("service", "")).lower()
+        product = str(logsource.get("product", "")).lower()
+        category = str(logsource.get("category", "")).lower()
+
+        if category == "network_connection" or service in ["dns", "firewall", "proxy"]:
+            return "network"
+        if service in ["ad", "active_directory"] or product in ["ad", "active_directory"]:
+            return "active_directory"
+        if service in ["sysmon", "security"] or product == "windows":
+            return "endpoint"
+
+        return "endpoint"  # fallback default
 
     def _extract_mitre_tags(self, tags: list) -> list:
         """
@@ -238,6 +284,7 @@ class SigmaMatcher:
 title: RDP Logon Bruteforce
 id: win_system_rdp_bruteforce
 description: Detects RDP logon failure patterns indicating brute force
+group: endpoint
 logsource:
     product: windows
     service: security
@@ -254,6 +301,7 @@ level: medium
 title: PowerShell Encoded Command Execution
 id: proc_creation_win_powershell_encoded_cmd
 description: Detects PowerShell command line with encoded argument
+group: endpoint
 logsource:
     product: windows
     service: sysmon
@@ -273,6 +321,7 @@ level: high
 title: Scheduled Task Creation
 id: proc_creation_win_scheduled_task_creation
 description: Detects scheduled task creation for persistence
+group: endpoint
 logsource:
     product: windows
     service: sysmon
@@ -291,6 +340,7 @@ level: medium
 title: Outbound Connection to Potential C2
 id: net_connection_win_c2_potential
 description: Detects outbound network connection to suspicious IP ranges
+group: network
 logsource:
     product: windows
     service: sysmon
@@ -298,8 +348,8 @@ detection:
     selection:
         event.code: 3
         destination.ip:
-            - "8.8.8.8"
-            - "1.1.1.1"
+            - "203.0.113.99"
+            - "198.51.100.5"
             - "5.5.5.5"
     condition: selection
 tags:
