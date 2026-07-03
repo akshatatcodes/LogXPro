@@ -41,7 +41,7 @@ class Settings:
     # Phase 3: Enrichment API keys                                         #
     # ------------------------------------------------------------------ #
     VT_API_KEY        = os.getenv("VT_API_KEY",        "")   # VirusTotal free key
-    ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")   # AbuseIPDB free key
+    ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "07144763ede2a6d4daf6e84e2bd6a5af9ccd9302a5013dcfcd764beaaf252bb055eff8cc52b94598")   # AbuseIPDB free key
     MISP_URL          = os.getenv("MISP_URL",          "http://localhost")
     MISP_API_KEY      = os.getenv("MISP_API_KEY",      "")
 
@@ -49,7 +49,7 @@ class Settings:
     # Phase 4: Local LLM via Ollama                                        #
     # ------------------------------------------------------------------ #
     OLLAMA_HOST  = os.getenv("OLLAMA_HOST",  "http://localhost:11434")
-    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
 
     # ------------------------------------------------------------------ #
     # Phase 5: TheHive SOAR integration                                    #

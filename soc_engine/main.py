@@ -248,16 +248,37 @@ class SOCEngine:
                 payload = build_alert_payload(basket, eval_res, alert_type, tier, rule)
                 if enrichment_data:
                     payload["enrichment"] = enrichment_data
+
+                # Phase 4: Run AI Narrative Generator
+                if tier in ["medium", "high", "critical"]:
+                    from soc_engine.ai import generate_incident_narrative
+                    try:
+                        narrative = generate_incident_narrative(
+                            basket,
+                            enrichment_data or {},
+                            best_chain or {}
+                        )
+                        payload["ai_narrative"] = narrative
+                    except Exception as e:
+                        print(f"[!] Error running AI narrator: {e}")
+
                 self._handle_alert(payload)
 
     def _handle_alert(self, payload: dict):
         """
-        Alert dispatch: currently prints structured JSON.
-        Phase 4 will index to ES 'soc-alerts'.
+        Alert dispatch: prints structured JSON and indexes to Elasticsearch 'soc-alerts'.
         Phase 5 will forward to TheHive.
         """
         import json
         print(f"    [ALERT PAYLOAD] {json.dumps(payload, indent=2, default=str)}")
+        
+        # Phase 4: Index to Elasticsearch index 'soc-alerts'
+        if not self.simulate and self.es_client:
+            try:
+                resp = self.es_client.index(index="soc-alerts", document=payload)
+                print(f"    [+] Alert successfully indexed to Elasticsearch 'soc-alerts' (ID: {resp.get('_id')})")
+            except Exception as e:
+                print(f"[!] Failed to index alert to Elasticsearch 'soc-alerts': {e}")
 
     def _find_chain(self, chain_id: str | None) -> dict | None:
         if not chain_id:
@@ -404,12 +425,26 @@ class SOCEngine:
                     payload = build_alert_payload(mock_basket, eval_res, alert_type, tier, rule)
 
                     # Phase 3: Run enrichment for Tier 2 or above (or instant critical)
+                    enrichment_data = None
                     if tier in ["medium", "high", "critical"]:
                         from soc_engine.enrichment import enrich_basket
                         # In simulation, we don't have real pg_conn, pass None.
                         # Also, mock_events_store holds all the events for the mock basket.
                         enrichment_data = enrich_basket(None, mock_basket["basket_id"], mock_events_store)
                         payload["enrichment"] = enrichment_data
+
+                    # Phase 4: Run AI Narrative Generator in simulation
+                    if tier in ["medium", "high", "critical"]:
+                        from soc_engine.ai import generate_incident_narrative
+                        try:
+                            narrative = generate_incident_narrative(
+                                mock_basket,
+                                enrichment_data or {},
+                                chain_target
+                            )
+                            payload["ai_narrative"] = narrative
+                        except Exception as e:
+                            print(f"[!] Error running AI narrator in simulation: {e}")
 
                     self._handle_alert(payload)
 

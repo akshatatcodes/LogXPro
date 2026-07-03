@@ -1,1 +1,1 @@
-# AI package (Phase 4)
+from soc_engine.ai.narrator import generate_incident_narrative
