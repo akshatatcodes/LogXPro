@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS incident_baskets (
     status          TEXT DEFAULT 'open',
     confidence_score INT DEFAULT 0,
     matched_stages  JSONB DEFAULT '[]',
+    assigned_to     TEXT,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

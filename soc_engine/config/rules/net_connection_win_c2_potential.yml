@@ -12,6 +12,7 @@ detection:
             - "203.0.113.99"
             - "198.51.100.5"
             - "5.5.5.5" # C2 test IP
+            - "104.248.130.195" # njRAT C2 IP
     condition: selection
 tags:
     - attack.t1071

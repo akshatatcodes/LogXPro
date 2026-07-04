@@ -184,9 +184,8 @@ class SOCEngine:
                     db.expire_old_open_baskets(settings.BASKET_EXPIRY_MINUTES)
                 except Exception as ex:
                     print(f"[!] Error running open basket cleanup: {ex}")
-
                 now = datetime.now(timezone.utc)
-                events = reader.get_new_events(start_time=last_polled, end_time=now)
+                events = reader.get_events_with_scroll(start_time=last_polled, end_time=now)
 
                 if events:
                     print(f"[*] {len(events)} new events received. Processing...")

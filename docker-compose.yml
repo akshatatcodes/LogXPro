@@ -40,6 +40,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: logxpro-redis
+    command: redis-server --requirepass redis_secure_pass_123
     ports:
       - "6379:6379"
     volumes:
@@ -62,12 +63,95 @@ services:
     networks:
       - logxpro-net
 
+  misp-db:
+    image: mariadb:10.11
+    container_name: logxpro-misp-db
+    environment:
+      MYSQL_ROOT_PASSWORD: misp_root_pass
+      MYSQL_DATABASE: misp
+      MYSQL_USER: misp
+      MYSQL_PASSWORD: misp_pass
+    volumes:
+      - mispdbdata:/var/lib/mysql
+    networks:
+      - logxpro-net
+
+  misp:
+    image: ghcr.io/misp/misp-docker/misp-core:latest
+    container_name: logxpro-misp
+    depends_on:
+      - misp-db
+      - redis
+    ports:
+      - "8080:80"
+      - "8443:443"
+    environment:
+      - MYSQL_HOST=misp-db
+      - MYSQL_DATABASE=misp
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=misp_pass
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=redis_secure_pass_123
+      - ADMIN_EMAIL=admin@admin.test
+      - ADMIN_PASSWORD=admin_pass_123
+      - ADMIN_ORG=LogXPro_ORG
+      - BASE_URL=http://localhost:8080
+      - DISABLE_SSL_REDIRECT=true
+    volumes:
+      - mispdata:/var/www/MISP
+    networks:
+      - logxpro-net
+
+  cassandra:
+    image: cassandra:4.0
+    container_name: logxpro-cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=logxpro-th
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=100M
+    volumes:
+      - cassandradata:/var/lib/cassandra
+    networks:
+      - logxpro-net
+
+  thehive:
+    image: strangebee/thehive:5.2
+    container_name: logxpro-thehive
+    depends_on:
+      - cassandra
+      - elasticsearch
+    ports:
+      - "9000:9000"
+    environment:
+      - JVM_OPTS=-Xms512m -Xmx512m
+    command:
+      - --secret
+      - "logxpro-secret-key-123456789012"
+      - --cql-hostnames
+      - "cassandra"
+      - --index-backend
+      - "elasticsearch"
+      - --es-hostnames
+      - "elasticsearch"
+    volumes:
+      - thehivedata:/opt/thp/thehive/data
+    networks:
+      - logxpro-net
+
 volumes:
   esdata:
     driver: local
   redisdata:
     driver: local
   pgdata:
+    driver: local
+  mispdbdata:
+    driver: local
+  mispdata:
+    driver: local
+  cassandradata:
+    driver: local
+  thehivedata:
     driver: local
 
 networks:

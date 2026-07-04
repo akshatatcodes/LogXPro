@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class Settings:
@@ -14,11 +17,12 @@ class Settings:
     REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
     REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
     REDIS_DB   = int(os.getenv("REDIS_DB",   0))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 
     # ------------------------------------------------------------------ #
     # PostgreSQL                                                            #
     # ------------------------------------------------------------------ #
-    DB_HOST     = os.getenv("DB_HOST",     "127.0.0.1")
+    DB_HOST     = os.getenv("DB_HOST",     "localhost")
     DB_PORT     = int(os.getenv("DB_PORT", 5433))
     DB_NAME     = os.getenv("DB_NAME",     "soc_engine")
     DB_USER     = os.getenv("DB_USER",     "soc_user")
@@ -40,7 +44,7 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Phase 3: Enrichment API keys                                         #
     # ------------------------------------------------------------------ #
-    VT_API_KEY        = os.getenv("VT_API_KEY",        "")   # VirusTotal free key
+    VT_API_KEY        = os.getenv("VT_API_KEY",        "e5d018e3d8bbe60164fe3c2dc49f735ea57010451c146218aca3ea1ab223f625")   # VirusTotal free key
     ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "07144763ede2a6d4daf6e84e2bd6a5af9ccd9302a5013dcfcd764beaaf252bb055eff8cc52b94598")   # AbuseIPDB free key
     MISP_URL          = os.getenv("MISP_URL",          "http://localhost")
     MISP_API_KEY      = os.getenv("MISP_API_KEY",      "")
