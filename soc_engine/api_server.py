@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -54,6 +54,147 @@ def ensure_assigned_to_column():
         print(f"[!] Database column check failed (PostgreSQL might be offline): {e}")
 
 
+def ensure_saved_searches_table():
+    """Runs CREATE TABLE IF NOT EXISTS for saved searches."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS saved_searches (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    created_by TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                """)
+                conn.commit()
+                print("[+] Successfully ensured saved_searches table exists.")
+        except Exception as err:
+            print(f"[!] CREATE TABLE error: {err}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database table check failed (PostgreSQL might be offline): {e}")
+
+def ensure_cases_table():
+    """Runs CREATE TABLE IF NOT EXISTS for cases."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS cases (
+                    id SERIAL PRIMARY KEY,
+                    basket_id UUID REFERENCES incident_baskets(basket_id),
+                    title TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    assignee TEXT,
+                    summary TEXT,
+                    technical_details TEXT,
+                    status TEXT DEFAULT 'open',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                """)
+                conn.commit()
+                print("[+] Successfully ensured cases table exists.")
+        except Exception as err:
+            print(f"[!] CREATE TABLE error: {err}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database table check failed (PostgreSQL might be offline): {e}")
+
+def ensure_audit_log_table():
+    """Runs CREATE TABLE IF NOT EXISTS for audit_log and adds any missing columns."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # Create base table
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id SERIAL PRIMARY KEY,
+                    event_type TEXT,
+                    basket_id UUID,
+                    rule_id TEXT,
+                    tier TEXT,
+                    actor TEXT,
+                    analyst_name TEXT,
+                    detail JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                """)
+                # Add any columns that may be missing if table already existed
+                for col, coltype in [
+                    ("rule_id", "TEXT"),
+                    ("tier", "TEXT"),
+                    ("actor", "TEXT"),
+                    ("analyst_name", "TEXT"),
+                ]:
+                    cur.execute(
+                        f"ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS {col} {coltype};"
+                    )
+                conn.commit()
+                print("[+] Successfully ensured audit_log table exists.")
+        except Exception as err:
+            print(f"[!] CREATE TABLE error: {err}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database table check failed (PostgreSQL might be offline): {e}")
+
+def ensure_analysts_and_sessions_tables():
+    """Runs CREATE TABLE IF NOT EXISTS for analysts and analyst_sessions."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS analysts (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    email TEXT,
+                    role TEXT NOT NULL,
+                    status TEXT DEFAULT 'inactive',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS analyst_sessions (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    login_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    logout_time TIMESTAMP WITH TIME ZONE,
+                    duration TEXT
+                );
+                """)
+                # Insert default analysts if table is empty
+                cur.execute("SELECT COUNT(*) FROM analysts;")
+                if cur.fetchone()["count"] == 0:
+                    default_analysts = [
+                        ("Alex Chen", "alex@logxpro.local", "analyst"),
+                        ("Sarah Ndiaye", "sarah@logxpro.local", "senior_analyst"),
+                        ("Marcus Vance", "marcus@logxpro.local", "manager"),
+                    ]
+                    for name, email, role in default_analysts:
+                        cur.execute(
+                            "INSERT INTO analysts (name, email, role) VALUES (%s, %s, %s);",
+                            (name, email, role)
+                        )
+                conn.commit()
+                print("[+] Successfully ensured analysts and sessions tables exist.")
+        except Exception as err:
+            print(f"[!] CREATE TABLE analysts/sessions error: {err}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database table check failed (PostgreSQL might be offline): {e}")
+
+
+
 # --------------------------------------------------------------------------- #
 # FastAPI lifespan (Phase 6: replaces deprecated @app.on_event("startup"))    #
 # --------------------------------------------------------------------------- #
@@ -61,6 +202,18 @@ def ensure_assigned_to_column():
 async def lifespan(app: FastAPI):
     # Startup: ensure db schema has assigned_to column
     ensure_assigned_to_column()
+    
+    # Startup: ensure db schema has saved_searches table
+    ensure_saved_searches_table()
+    
+    # Startup: ensure db schema has cases table
+    ensure_cases_table()
+    
+    # Startup: ensure db schema has audit_log table
+    ensure_audit_log_table()
+
+    # Startup: ensure db schema has analysts and sessions tables
+    ensure_analysts_and_sessions_tables()
     
     # Startup: launch background correlation engine if DISABLE_ENGINE is not set
     if not os.getenv("DISABLE_ENGINE"):
@@ -129,6 +282,44 @@ class FalsePositiveRequest(BaseModel):
 
 class GRCProfileRequest(BaseModel):
     profile: str
+
+class SavedSearchRequest(BaseModel):
+    name: str
+    query: str
+
+class CaseRequest(BaseModel):
+    basket_id: str | None = None
+    title: str
+    severity: str
+    assignee: str | None = None
+    summary: str | None = None
+    technical_details: str | None = None
+    close_basket: bool = True
+
+class AnalystCreateRequest(BaseModel):
+    id: int | None = None
+    name: str
+    email: str | None = None
+    role: str
+
+class AnalystSessionRequest(BaseModel):
+    name: str
+
+class CaseUpdateRequest(BaseModel):
+    title: str
+    severity: str
+    assignee: str | None = None
+    summary: str | None = None
+    technical_details: str | None = None
+    status: str
+
+class PlaybookSaveRequest(BaseModel):
+    filename: str
+    yaml_content: str
+
+class DocSaveRequest(BaseModel):
+    filename: str
+    content: str
 
 
 # --------------------------------------------------------------------------- #
@@ -855,7 +1046,7 @@ def suppress_alert(req: SuppressionRequest):
             user_name=req.user_name,
             rule_id=req.rule_id,
             suppressed_by=req.suppressed_by,
-            expires_in_seconds=req.expires_in_seconds
+            duration_days=req.duration_days
         )
         if res:
             res_dict = dict(res)
@@ -877,6 +1068,393 @@ def suppress_alert(req: SuppressionRequest):
                 "expires_at": datetime.now(timezone.utc).isoformat()
             }
         }
+
+# --------------------------------------------------------------------------- #
+# Phase 8: Log Analysis API Endpoints                                         #
+# --------------------------------------------------------------------------- #
+@app.get("/api/logs/search")
+def search_logs(q: str = "", host: str = "", _from: str = "now-24h", size: int = 500):
+    """Searches raw logs in Elasticsearch."""
+    try:
+        from elasticsearch import Elasticsearch
+        es = Elasticsearch(settings.ES_HOST)
+        if not es.ping():
+            raise Exception("Elasticsearch offline")
+        
+        # Build query
+        must_clauses = []
+        if q:
+            must_clauses.append({"query_string": {"query": q}})
+        if host:
+            must_clauses.append({"match": {"host.name": host}})
+            
+        # Time filter mapping
+        time_mapping = {
+            "now-1h": "now-1h",
+            "now-24h": "now-24h",
+            "now-7d": "now-7d",
+            "now-30d": "now-30d",
+        }
+        
+        filter_clauses = []
+        if _from != "all":
+            gte_time = time_mapping.get(_from, "now-24h")
+            filter_clauses.append({"range": {"@timestamp": {"gte": gte_time}}})
+        
+        query = {
+            "query": {
+                "bool": {
+                    "must": must_clauses,
+                }
+            },
+            "size": size,
+            "sort": [{"@timestamp": {"order": "desc"}}]
+        }
+        
+        if filter_clauses:
+            query["query"]["bool"]["filter"] = filter_clauses
+        
+        if not must_clauses:
+            query["query"]["bool"].pop("must")
+            
+        res = es.search(index=settings.ES_INDEX, body=query)
+        hits = res["hits"]["hits"]
+        
+        logs = []
+        for hit in hits:
+            source = hit["_source"]
+            
+            # Extract timestamp safely
+            timestamp_val = source.get("@timestamp") or source.get("timestamp")
+            
+            # Extract host safely (host.name can be stored as a list by Sysmon parsers)
+            host_val = None
+            if "host" in source and isinstance(source["host"], dict):
+                host_val = source["host"].get("name")
+                if isinstance(host_val, list):
+                    host_val = host_val[0] if host_val else None
+            if not host_val:
+                host_val = source.get("host_name") or source.get("winlog", {}).get("computer_name")
+                
+            # Extract user safely
+            user_val = None
+            if "user" in source and isinstance(source["user"], dict):
+                user_val = source["user"].get("name")
+            if not user_val:
+                user_val = source.get("user_name") or source.get("winlog", {}).get("event_data", {}).get("User")
+                
+            # Extract event type / action safely
+            event_type_val = source.get("event_type")
+            if not event_type_val:
+                if "event" in source and isinstance(source["event"], dict):
+                    event_type_val = source["event"].get("action") or source["event"].get("category")
+                    if isinstance(event_type_val, list) and event_type_val:
+                        event_type_val = event_type_val[0]
+            if not event_type_val:
+                event_type_val = source.get("winlog", {}).get("provider_name")
+                
+            logs.append({
+                "id": hit["_id"],
+                "timestamp": timestamp_val,
+                "host": host_val,
+                "user": user_val,
+                "event_type": event_type_val,
+                "severity": source.get("severity") or "informational",
+                "raw_event": source
+            })
+            
+        return {"status": "success", "total": res["hits"]["total"]["value"], "logs": logs}
+    except Exception as e:
+        print(f"[!] ES Search error: {e}. Returning mock logs.")
+        # Return some mock data if ES is down
+        return {
+            "status": "success", 
+            "total": 3,
+            "logs": [
+                {
+                    "id": "mock-1",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "host": host or "DESKTOP-MOCK",
+                    "user": "Administrator",
+                    "event_type": "Process Creation",
+                    "severity": "high",
+                    "raw_event": {
+                        "winlog": {
+                            "provider_name": "Microsoft-Windows-Sysmon",
+                            "event_id": 1,
+                            "computer_name": host or "DESKTOP-MOCK.localdomain"
+                        },
+                        "event_data": {
+                            "RuleName": "technique_id=T1059,technique_name=Command and Scripting Interpreter",
+                            "UtcTime": datetime.now(timezone.utc).isoformat(),
+                            "ProcessGuid": "{A98268C1-959B-5E5A-0000-0010EA380000}",
+                            "ProcessId": "4212",
+                            "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                            "FileVersion": "10.0.19041.546 (WinBuild.160101.0800)",
+                            "Description": "Windows PowerShell",
+                            "Product": "Microsoft® Windows® Operating System",
+                            "Company": "Microsoft Corporation",
+                            "OriginalFileName": "PowerShell.EXE",
+                            "CommandLine": f"{q or 'powershell.exe'} -ExecutionPolicy Bypass -EncodedCommand JABzAD0ATgBlAHcALQBPAGIAagBlAGMAdAAgAEkATwAuAE0AZQBtAG8AcgB5AFMAdAByAGUAYQBtACgAWwBDAG8AbgB2AGUAcgB0AF0AOgA6AEYAcgBvAG0AQgBhAHMAZQA2ADQAUwB0AHIAaQBuAGcAKAAiAEgA...",
+                            "CurrentDirectory": "C:\\Users\\Administrator\\",
+                            "User": "NT AUTHORITY\\SYSTEM",
+                            "LogonGuid": "{A98268C1-9599-5E5A-0000-0020E7030000}",
+                            "LogonId": "0x3e7",
+                            "TerminalSessionId": "1",
+                            "IntegrityLevel": "System",
+                            "Hashes": "SHA1=E19FDDBACCE920AC38A2A8DBB1622AE24CA3B306,MD5=04029E121A0CFA5991749937DD22A1D9,SHA256=36C5D12033B2EFA61CBBA6F2741BE4429EBB03649E8BB50A9F8E192931E562D5,IMPHASH=A7312C5734A12B262FEEA76E837D80DE",
+                            "ParentProcessGuid": "{A98268C1-959B-5E5A-0000-001026380000}",
+                            "ParentProcessId": "3124",
+                            "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                            "ParentCommandLine": "\"C:\\Windows\\System32\\cmd.exe\" /c powershell.exe -ExecutionPolicy Bypass ..."
+                        },
+                        "network": {
+                            "source_ip": "10.0.0.142",
+                            "destination_ip": "104.21.34.45",
+                            "destination_port": 443
+                        },
+                        "severity": "high",
+                        "mitre_technique": "T1059.001"
+                    }
+                }
+            ]
+        }
+
+@app.get("/api/logs/saved_searches")
+def get_saved_searches():
+    """Gets all saved searches."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM saved_searches ORDER BY created_at DESC;")
+                rows = cur.fetchall()
+                res = []
+                for r in rows:
+                    r_dict = dict(r)
+                    r_dict["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                    res.append(r_dict)
+                return res
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database fetch saved searches error: {e}")
+        return []
+
+@app.post("/api/logs/saved_searches")
+def create_saved_search(req: SavedSearchRequest):
+    """Creates a new saved search."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO saved_searches (name, query, created_by) VALUES (%s, %s, %s) RETURNING *;",
+                    (req.name, req.query, "analyst")
+                )
+                r = cur.fetchone()
+                conn.commit()
+                r_dict = dict(r)
+                r_dict["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                return {"status": "success", "data": r_dict}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database create saved search error: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/api/logs/saved_searches/{search_id}")
+def delete_saved_search(search_id: int):
+    """Deletes a saved search."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM saved_searches WHERE id = %s;", (search_id,))
+                conn.commit()
+                return {"status": "success"}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database delete saved search error: {e}")
+        return {"status": "error"}
+
+@app.get("/api/enrichment/{indicator}")
+def enrich_single_indicator(indicator: str, type: str = "ip"):
+    """Triggers on-demand enrichment for a single indicator."""
+    from soc_engine.enrichment.orchestrator import check_ip_vt, check_ip_abuseipdb, check_misp, check_hash_vt, check_domain_vt
+    
+    result = {}
+    try:
+        conn = db.get_db_connection()
+    except:
+        conn = None
+        
+    try:
+        if type == "ip":
+            result["virustotal"] = check_ip_vt(conn, indicator) if conn else {"malicious": 5, "total": 94, "country": "RU", "note": "Mock Data"}
+            result["abuseipdb"] = check_ip_abuseipdb(conn, indicator) if conn else {"abuse_score": 100, "total_reports": 250, "note": "Mock Data"}
+            result["misp"] = check_misp(conn, indicator, "ip") if conn else {"found": True, "tags": ["Mock Data"]}
+        elif type == "hash":
+            result["virustotal"] = check_hash_vt(conn, indicator) if conn else {"malicious": 60, "total": 70, "name": "malware.exe", "note": "Mock Data"}
+            result["misp"] = check_misp(conn, indicator, "hash") if conn else {"found": True, "tags": ["Mock Data"]}
+        elif type == "domain":
+            result["virustotal"] = check_domain_vt(conn, indicator) if conn else {"malicious": 12, "total": 90, "note": "Mock Data"}
+            result["misp"] = check_misp(conn, indicator, "domain") if conn else {"found": False}
+        else:
+            result["error"] = "Unknown indicator type"
+    except Exception as e:
+        result["error"] = str(e)
+    
+    if conn:
+        conn.close()
+        
+    return {"status": "success", "indicator": indicator, "type": type, "data": result}
+
+# --------------------------------------------------------------------------- #
+# Phase 9: Case Writing & Escalation Endpoints                                #
+# --------------------------------------------------------------------------- #
+@app.get("/api/cases")
+def get_cases():
+    """Gets all cases."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM cases ORDER BY created_at DESC;")
+                rows = cur.fetchall()
+                res = []
+                for r in rows:
+                    r_dict = dict(r)
+                    r_dict["basket_id"] = str(r["basket_id"]) if r["basket_id"] else None
+                    r_dict["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                    r_dict["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
+                    res.append(r_dict)
+                return res
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database fetch cases error: {e}")
+        return []
+
+@app.post("/api/cases")
+def create_case(req: CaseRequest):
+    """Creates a new formal case report and optionally closes the parent basket."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # Insert Case
+                cur.execute(
+                    """
+                    INSERT INTO cases (basket_id, title, severity, assignee, summary, technical_details, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'open') RETURNING *;
+                    """,
+                    (req.basket_id, req.title, req.severity, req.assignee, req.summary, req.technical_details)
+                )
+                r = cur.fetchone()
+                
+                # Optional: Auto-close the basket
+                if req.basket_id and req.close_basket:
+                    cur.execute(
+                        "UPDATE incident_baskets SET status = 'resolved', updated_at = NOW() WHERE basket_id = %s;",
+                        (req.basket_id,)
+                    )
+                
+                conn.commit()
+                r_dict = dict(r)
+                r_dict["basket_id"] = str(r["basket_id"]) if r["basket_id"] else None
+                r_dict["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                r_dict["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
+                return {"status": "success", "data": r_dict}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database create case error: {e}")
+        return {"status": "error", "message": str(e)}
+
+# --------------------------------------------------------------------------- #
+# Phase 10: Documentation & Playbooks Endpoints                               #
+# --------------------------------------------------------------------------- #
+import yaml
+
+@app.get("/api/docs")
+def get_docs_list():
+    """Returns a list of available documentation markdown files."""
+    docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+    if not os.path.exists(docs_dir):
+        return []
+    
+    docs = []
+    for f in os.listdir(docs_dir):
+        if f.endswith(".md"):
+            docs.append({
+                "id": f.replace(".md", ""),
+                "filename": f,
+                "title": f.replace("_", " ").replace(".md", "").title()
+            })
+    return docs
+
+@app.get("/api/docs/{filename}")
+def get_doc_content(filename: str):
+    """Returns the raw markdown content of a documentation file."""
+    # Prevent path traversal
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+        
+    docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+    filepath = os.path.join(docs_dir, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Documentation not found")
+        
+    with open(filepath, "r", encoding="utf-8") as f:
+        return {"content": f.read()}
+
+@app.get("/api/playbooks")
+def get_playbooks():
+    """Returns all parsed YAML playbooks."""
+    playbooks_dir = os.path.join(os.path.dirname(__file__), "config", "playbooks")
+    if not os.path.exists(playbooks_dir):
+        return []
+        
+    playbooks = []
+    for f in os.listdir(playbooks_dir):
+        if f.endswith(".yaml") or f.endswith(".yml"):
+            filepath = os.path.join(playbooks_dir, f)
+            try:
+                with open(filepath, "r", encoding="utf-8") as yaml_file:
+                    parsed = yaml.safe_load(yaml_file)
+                    if parsed:
+                        playbooks.append({
+                            "id": f,
+                            "filename": f,
+                            "content": parsed
+                        })
+            except Exception as e:
+                print(f"[!] Error parsing playbook {f}: {e}")
+                
+    return playbooks
+
+@app.get("/api/playbooks/{filename}")
+def get_playbook_content(filename: str):
+    """Returns the raw YAML content of a playbook."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+        
+    playbooks_dir = os.path.join(os.path.dirname(__file__), "config", "playbooks")
+    filepath = os.path.join(playbooks_dir, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Playbook not found")
+        
+    with open(filepath, "r", encoding="utf-8") as f:
+        return {"content": f.read()}
+
+
+# NOTE: The old /api/upload handler that only ran process_log without indexing
+# to Elasticsearch has been removed. The correct handler lives below at the
+# process_uploaded_file background task which both indexes AND runs detection.
 
 @app.post("/api/response/block")
 def run_block_action(req: BlockRequest):
@@ -997,6 +1575,14 @@ def process_uploaded_file(temp_path: str, file_type: str, original_filename: str
             }
             actions.append(action)
             
+            # Feed each event through the Sigma correlation engine so detections
+            # fire on uploaded data (alerts are written to the baskets DB table).
+            if background_engine:
+                try:
+                    background_engine.process_log(ev)
+                except Exception as det_err:
+                    print(f"[!] Detection error for event from {original_filename}: {det_err}")
+            
         from elasticsearch import Elasticsearch
         from elasticsearch.helpers import bulk
         
@@ -1022,7 +1608,7 @@ async def upload_file(
     """Accepts log/pcap file upload, detects format, and parses/indexes in background."""
     filename = file.filename
     ext = os.path.splitext(filename.lower())[1]
-    allowed_exts = ['.pcap', '.pcapng', '.log', '.json', '.jsonl', '.csv', '.txt']
+    allowed_exts = ['.pcap', '.pcapng', '.cap', '.log', '.json', '.jsonl', '.csv', '.txt']
     if ext not in allowed_exts:
         raise HTTPException(
             status_code=400,
@@ -1066,6 +1652,14 @@ async def upload_file(
             detail="Could not determine file type. Supported: PCAP, Zeek, JSON, CSV, Syslog"
         )
 
+    # Quick synchronous parse to get event count for the UI response.
+    # The background task will re-parse for indexing + detection.
+    try:
+        events_preview = parse_file(temp_path, file_type, filename)
+        events_parsed_count = len(events_preview)
+    except Exception:
+        events_parsed_count = 0
+
     batch_id = str(uuid.uuid4())
     background_tasks.add_task(process_uploaded_file, temp_path, file_type, filename, batch_id)
     
@@ -1075,6 +1669,7 @@ async def upload_file(
         "batch_id": batch_id,
         "filename": filename,
         "file_type": file_type,
+        "events_parsed": events_parsed_count,
         "results_url": f"/api/upload/status/{batch_id}"
     }
 
@@ -2239,6 +2834,321 @@ def get_dashboard():
     </html>
     """
     return HTMLResponse(content=html_content)
+
+# --------------------------------------------------------------------------- #
+# CRUD & Admin Panel Endpoints                                                #
+# --------------------------------------------------------------------------- #
+
+@app.delete("/api/cases/{case_id}")
+def delete_case(case_id: int):
+    """Deletes a case report by ID."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM cases WHERE id = %s RETURNING *;", (case_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Case not found")
+                conn.commit()
+                return {"status": "success", "message": f"Deleted case {case_id}"}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database delete case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/cases/{case_id}")
+def update_case(case_id: int, req: CaseUpdateRequest):
+    """Updates an existing case report."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE cases
+                    SET title = %s, severity = %s, assignee = %s, summary = %s, technical_details = %s, status = %s, updated_at = NOW()
+                    WHERE id = %s RETURNING *;
+                    """,
+                    (req.title, req.severity, req.assignee, req.summary, req.technical_details, req.status, case_id)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Case not found")
+                conn.commit()
+                row_dict = dict(row)
+                row_dict["basket_id"] = str(row["basket_id"]) if row["basket_id"] else None
+                row_dict["created_at"] = row["created_at"].isoformat() if row["created_at"] else None
+                row_dict["updated_at"] = row["updated_at"].isoformat() if row["updated_at"] else None
+                return {"status": "success", "data": row_dict}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database update case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analysts")
+def get_analysts_list():
+    """Gets all analysts from DB."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM analysts ORDER BY name ASC;")
+                rows = cur.fetchall()
+                res = []
+                for r in rows:
+                    r_dict = dict(r)
+                    r_dict["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                    res.append(r_dict)
+                return res
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database fetch analysts error: {e}")
+        return []
+
+@app.post("/api/analysts")
+def create_or_update_analyst(req: AnalystCreateRequest):
+    """Creates or updates an analyst."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                if req.id is not None:
+                    # Update
+                    cur.execute(
+                        """
+                        UPDATE analysts
+                        SET name = %s, email = %s, role = %s
+                        WHERE id = %s RETURNING *;
+                        """,
+                        (req.name, req.email, req.role, req.id)
+                    )
+                else:
+                    # Create
+                    cur.execute(
+                        """
+                        INSERT INTO analysts (name, email, role, status)
+                        VALUES (%s, %s, %s, 'inactive') RETURNING *;
+                        """,
+                        (req.name, req.email, req.role)
+                    )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Analyst not found or duplicate name")
+                conn.commit()
+                r_dict = dict(row)
+                r_dict["created_at"] = row["created_at"].isoformat() if row["created_at"] else None
+                return {"status": "success", "data": r_dict}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database save analyst error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/analysts/{analyst_id}")
+def delete_analyst(analyst_id: int):
+    """Deletes an analyst by ID."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM analysts WHERE id = %s RETURNING *;", (analyst_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Analyst not found")
+                conn.commit()
+                return {"status": "success", "message": f"Deleted analyst {analyst_id}"}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database delete analyst error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analysts/sessions")
+def get_analyst_sessions():
+    """Gets recent sessions."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM analyst_sessions ORDER BY login_time DESC LIMIT 100;")
+                rows = cur.fetchall()
+                res = []
+                for r in rows:
+                    r_dict = dict(r)
+                    r_dict["login_time"] = r["login_time"].isoformat() if r["login_time"] else None
+                    r_dict["logout_time"] = r["logout_time"].isoformat() if r["logout_time"] else None
+                    res.append(r_dict)
+                return res
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database fetch analyst sessions error: {e}")
+        return []
+
+@app.post("/api/analysts/login")
+def login_analyst(req: AnalystSessionRequest):
+    """Logs in an analyst (simulated session)."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # Update status
+                cur.execute("UPDATE analysts SET status = 'active' WHERE name = %s;", (req.name,))
+                
+                # Check if analyst already has an open session
+                cur.execute("SELECT id FROM analyst_sessions WHERE name = %s AND logout_time IS NULL;", (req.name,))
+                open_sess = cur.fetchone()
+                if not open_sess:
+                    # Create session
+                    cur.execute(
+                        "INSERT INTO analyst_sessions (name, login_time) VALUES (%s, NOW()) RETURNING *;",
+                        (req.name,)
+                    )
+                conn.commit()
+                return {"status": "success", "message": f"Analyst {req.name} logged in"}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database login analyst error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/analysts/logout")
+def logout_analyst(req: AnalystSessionRequest):
+    """Logs out an analyst (simulated session)."""
+    try:
+        conn = db.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # Update status
+                cur.execute("UPDATE analysts SET status = 'inactive' WHERE name = %s;", (req.name,))
+                
+                # Close session
+                cur.execute(
+                    "SELECT id, login_time FROM analyst_sessions WHERE name = %s AND logout_time IS NULL ORDER BY login_time DESC LIMIT 1;",
+                    (req.name,)
+                )
+                sess = cur.fetchone()
+                if sess:
+                    login_time = sess["login_time"]
+                    logout_time = datetime.now(timezone.utc)
+                    delta = logout_time - login_time
+                    
+                    # Stringify duration
+                    sec = int(delta.total_seconds())
+                    if sec < 60:
+                        duration_str = f"{sec}s"
+                    elif sec < 3600:
+                        duration_str = f"{sec // 60}m {sec % 60}s"
+                    else:
+                        duration_str = f"{sec // 3600}h {(sec % 3600) // 60}m"
+                        
+                    cur.execute(
+                        "UPDATE analyst_sessions SET logout_time = %s, duration = %s WHERE id = %s;",
+                        (logout_time, duration_str, sess["id"])
+                    )
+                conn.commit()
+                return {"status": "success", "message": f"Analyst {req.name} logged out"}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Database logout analyst error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/playbooks")
+def save_playbook(req: PlaybookSaveRequest):
+    """Saves or updates a playbook YAML on disk."""
+    try:
+        filename = req.filename
+        if not (filename.endswith(".yaml") or filename.endswith(".yml")) or ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid playbook filename")
+            
+        playbooks_dir = os.path.join(os.path.dirname(__file__), "config", "playbooks")
+        os.makedirs(playbooks_dir, exist_ok=True)
+        filepath = os.path.join(playbooks_dir, filename)
+        
+        # Test safe parse
+        try:
+            yaml.safe_load(req.yaml_content)
+        except Exception as y_err:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML syntax: {str(y_err)}")
+            
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(req.yaml_content)
+            
+        return {"status": "success", "filename": filename}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[!] Playbook save error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/playbooks/{filename}")
+def delete_playbook_file(filename: str):
+    """Deletes a playbook file from disk."""
+    try:
+        if not (filename.endswith(".yaml") or filename.endswith(".yml")) or ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid playbook filename")
+            
+        playbooks_dir = os.path.join(os.path.dirname(__file__), "config", "playbooks")
+        filepath = os.path.join(playbooks_dir, filename)
+        
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return {"status": "success", "message": f"Deleted playbook {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="Playbook not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[!] Playbook delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/docs")
+def save_doc_file(req: DocSaveRequest):
+    """Saves or updates a doc markdown file on disk."""
+    try:
+        filename = req.filename
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid documentation filename")
+            
+        docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+        os.makedirs(docs_dir, exist_ok=True)
+        filepath = os.path.join(docs_dir, filename)
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(req.content)
+            
+        return {"status": "success", "filename": filename}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[!] Doc save error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/docs/{filename}")
+def delete_doc_file(filename: str):
+    """Deletes a doc file from disk."""
+    try:
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid doc filename")
+            
+        docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+        filepath = os.path.join(docs_dir, filename)
+        
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return {"status": "success", "message": f"Deleted documentation {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="Documentation not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[!] Doc delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --------------------------------------------------------------------------- #
 # Main Entry Point                                                            #

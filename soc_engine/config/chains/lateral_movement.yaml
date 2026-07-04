@@ -8,6 +8,7 @@ stages:
     sigma_rules:
       - "win_special_privilege_logon"
       - "win_admin_account_creation"
+      - "net_connection_win_kerberos_auth"
   - stage: 2
     name: "Credential Dumping"
     mitre: "T1003.001"
@@ -21,11 +22,13 @@ stages:
     sigma_rules:
       - "net_connection_win_smb_lateral"
       - "proc_creation_win_wmi_spawns_process"
+      - "net_connection_win_wmi_rpc_lateral"
   - stage: 4
     name: "Discovery / Reconnaissance"
     mitre: "T1087.002"
     sigma_rules:
       - "proc_creation_win_net_user_enum"
       - "proc_creation_win_nltest_domain_trust"
+      - "net_connection_win_ldap_discovery"
 time_window_minutes: 15
 min_stages_for_alert: 2

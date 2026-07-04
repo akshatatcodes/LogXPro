@@ -46,7 +46,7 @@ def load_chains(chains_dir: str = "./soc_engine/config/chains") -> list:
 
     # Built-in fallback (covers Phase 2 demo if chains/ dir is empty)
     if not chains:
-        print("[!] No chain YAMLs found — using built-in Phishing → C2 fallback.")
+        print("[!] No chain YAMLs found -- using built-in Phishing -> C2 fallback.")
         chains.append({
             "chain_id": "chain_001",
             "name": "Phishing to C2",

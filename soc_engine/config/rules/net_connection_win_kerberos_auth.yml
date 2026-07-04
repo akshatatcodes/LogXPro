@@ -1,0 +1,16 @@
+title: Kerberos Authentication Connection
+id: net_connection_win_kerberos_auth
+description: Detects outbound Kerberos authentication traffic (port 88), indicating active domain logon authentication.
+group: network
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.port: 88
+    condition: selection
+tags:
+    - attack.t1078.002
+    - attack.t1558
+level: low

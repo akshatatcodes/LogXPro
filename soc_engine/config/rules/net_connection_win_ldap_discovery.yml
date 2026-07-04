@@ -1,0 +1,16 @@
+title: LDAP Active Directory Query
+id: net_connection_win_ldap_discovery
+description: Detects LDAP queries on port 389, representing domain environment discovery or directory querying.
+group: network
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.port: 389
+    condition: selection
+tags:
+    - attack.t1087.002
+    - attack.t1018
+level: medium

@@ -29,6 +29,15 @@ export function formatTime(iso) {
     + ' ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+export function formatTimeMs(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const hms = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  const ms  = String(d.getMilliseconds()).padStart(3, '0')
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${hms}.${ms} ${date}`
+}
+
 export function relativeTime(iso) {
   if (!iso) return '—'
   const diff = (Date.now() - new Date(iso)) / 1000

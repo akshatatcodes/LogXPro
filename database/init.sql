@@ -74,3 +74,25 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_basket ON audit_log(basket_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
 
+-- Phase 8: Saved Searches
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    created_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Phase 9: Cases (Escalation)
+CREATE TABLE IF NOT EXISTS cases (
+    id SERIAL PRIMARY KEY,
+    basket_id UUID REFERENCES incident_baskets(basket_id),
+    title TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    assignee TEXT,
+    summary TEXT,
+    technical_details TEXT,
+    status TEXT DEFAULT 'open',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

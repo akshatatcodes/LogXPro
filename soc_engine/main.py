@@ -112,12 +112,12 @@ class SOCEngine:
                 settings.ES_HOST, request_timeout=2.0, max_retries=0
             )
             if not self.es_client.ping():
-                print("[!] Elasticsearch not reachable → switching to SIMULATE mode.")
+                print("[!] Elasticsearch not reachable -> switching to SIMULATE mode.")
                 self.simulate = True
             else:
                 print("[+] Elasticsearch connected.")
         except Exception as e:
-            print(f"[!] ES error: {e} → switching to SIMULATE mode.")
+            print(f"[!] ES error: {e} -> switching to SIMULATE mode.")
             self.simulate = True
 
         # PostgreSQL
@@ -133,7 +133,7 @@ class SOCEngine:
             conn.close()
             print("[+] PostgreSQL connected.")
         except Exception as e:
-            print(f"[!] PostgreSQL error: {e} → switching to SIMULATE mode.")
+            print(f"[!] PostgreSQL error: {e} -> switching to SIMULATE mode.")
             self.simulate = True
 
         # Redis
@@ -141,7 +141,7 @@ class SOCEngine:
             basket_manager.redis_client.ping()
             print("[+] Redis connected.")
         except Exception as e:
-            print(f"[!] Redis error: {e} → switching to SIMULATE mode.")
+            print(f"[!] Redis error: {e} -> switching to SIMULATE mode.")
             self.simulate = True
 
         # Phase 6: Apply Elasticsearch ILM policy (retention from GRC profile)
@@ -306,7 +306,7 @@ class SOCEngine:
             raw_event={**store_event, "rule_id": rule_id},
             mitre_technique=mitre_id
         )
-        print(f"    [+] Event → basket {basket_id[:8]}... (new={is_new})")
+        print(f"    [+] Event -> basket {basket_id[:8]}... (new={is_new})")
 
         # Chain evaluation
         eval_res = evaluate_basket(basket_id, self.chains)

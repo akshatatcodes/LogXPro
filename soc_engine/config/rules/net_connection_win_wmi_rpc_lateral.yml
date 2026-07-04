@@ -1,0 +1,15 @@
+title: WMI DCOM Lateral Movement Connection
+id: net_connection_win_wmi_rpc_lateral
+description: Detects outbound RPC connections (port 135) which may indicate remote WMI execution or DCOM lateral movement
+group: network
+logsource:
+    product: windows
+    service: sysmon
+detection:
+    selection:
+        event.code: 3
+        destination.port: 135
+    condition: selection
+tags:
+    - attack.t1021.002
+level: high

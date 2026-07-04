@@ -1,53 +1,53 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchAlerts, assignAlert, closeAlert, markFalsePositive } from '../api'
+import { fetchAlerts, assignAlert, closeAlert, markFalsePositive, fetchAnalysts } from '../api'
 import {
   ChevronDown, ChevronRight, Shield, User, Monitor, Clock,
-  CheckCircle2, XCircle, AlertTriangle, ExternalLink,
-  GitBranch, Brain, Layers, Search, Filter, RefreshCw,
-  UserCheck, FileWarning, Gavel, ArrowUpRight
+  CheckCircle2, XCircle, AlertTriangle, GitBranch, Brain,
+  Search, RefreshCw, UserCheck, FileWarning, FileText, ArrowUpRight
 } from 'lucide-react'
 import {
   severityFromScore, statusBadgeClass, severityBadgeClass,
-  formatTime, relativeTime, ANALYSTS, mitreLabel
+  formatTime, relativeTime, mitreLabel
 } from '../utils'
 import { useNavigate } from 'react-router-dom'
 
-// ---------------------------------------------------------------------------
-// Enrichment Cards
-// ---------------------------------------------------------------------------
-function EnrichmentCard({ ip, data }) {
+/* ── Helpers ──────────────────────────────────────────────── */
+function hexToRgb(hex) {
+  const res = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  return res ? `${parseInt(res[1],16)},${parseInt(res[2],16)},${parseInt(res[3],16)}` : '0,0,0'
+}
+
+/* ── Threat Intelligence Card ─────────────────────────────── */
+function ThreatIntelCard({ ip, data }) {
   const vt = data?.virustotal || {}
   const ab = data?.abuseipdb  || {}
   const ms = data?.misp       || {}
 
-  const vtScore = vt.malicious && vt.total ? Math.round((vt.malicious / vt.total) * 100) : 0
-
   return (
-    <div className="glass-card" style={{ padding: '14px 16px' }}>
-      <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 600, color: 'var(--accent-bright)', marginBottom: 12 }}>
+    <div style={{
+      background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '14px 16px', marginBottom: 10
+    }}>
+      <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 600, color: '#4f46e5', marginBottom: 12 }}>
         🌐 {ip}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        {/* VT */}
-        <div style={{ background: 'rgba(244,63,94,0.08)', borderRadius: 8, padding: '10px 12px', border: '1px solid rgba(244,63,94,0.2)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#f43f5e', marginBottom: 6 }}>VirusTotal</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: '#f43f5e' }}>{vt.malicious ?? '—'}<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>/{vt.total ?? '—'}</span></div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>malicious · {vt.country || '—'}</div>
+        <div style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', border: '1px solid #fecaca' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#dc2626', marginBottom: 6 }}>VirusTotal</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: '#dc2626' }}>{vt.malicious ?? '—'}<span style={{ fontSize: 12, color: '#94a3b8' }}>/{vt.total ?? '—'}</span></div>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>malicious · {vt.country || '—'}</div>
         </div>
-        {/* AbuseIPDB */}
-        <div style={{ background: 'rgba(249,115,22,0.08)', borderRadius: 8, padding: '10px 12px', border: '1px solid rgba(249,115,22,0.2)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#f97316', marginBottom: 6 }}>AbuseIPDB</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: '#f97316' }}>{ab.abuse_score ?? '—'}<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>/100</span></div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{ab.total_reports ?? '—'} reports</div>
+        <div style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', border: '1px solid #fed7aa' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#ea580c', marginBottom: 6 }}>AbuseIPDB</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: '#ea580c' }}>{ab.abuse_score ?? '—'}<span style={{ fontSize: 12, color: '#94a3b8' }}>/100</span></div>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{ab.total_reports ?? '—'} reports</div>
         </div>
-        {/* MISP */}
-        <div style={{ background: 'rgba(139,92,246,0.08)', borderRadius: 8, padding: '10px 12px', border: '1px solid rgba(139,92,246,0.2)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent-bright)', marginBottom: 6 }}>MISP</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: ms.found ? '#a78bfa' : 'var(--text-muted)' }}>
+        <div style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', border: '1px solid #c7d2fe' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#4f46e5', marginBottom: 6 }}>MISP</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: ms.found ? '#4f46e5' : '#94a3b8' }}>
             {ms.found ? '✓' : '—'}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
             {ms.tags?.slice(0,2).join(', ') || (ms.found ? 'Known IOC' : 'Not found')}
           </div>
         </div>
@@ -56,11 +56,9 @@ function EnrichmentCard({ ip, data }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Kill Chain Timeline
-// ---------------------------------------------------------------------------
+/* ── Kill Chain Timeline ──────────────────────────────────── */
 function KillChainTimeline({ events, stages }) {
-  // Build timeline from events if available, else from matched_stages
+  const stepColors = ['#0891b2', '#ca8a04', '#ea580c', '#dc2626', '#4f46e5']
   const items = events?.length > 0
     ? events.map((e, i) => ({
         step: i + 1,
@@ -77,8 +75,6 @@ function KillChainTimeline({ events, stages }) {
         detail: ''
       }))
 
-  const stepColors = ['#06b6d4', '#eab308', '#f97316', '#f43f5e', '#a78bfa', '#f43f5e']
-
   return (
     <div>
       {items.length === 0 ? (
@@ -86,27 +82,24 @@ function KillChainTimeline({ events, stages }) {
       ) : (
         items.map((item, idx) => (
           <div key={idx} className="timeline-step">
-            {/* Step dot */}
             <div style={{
-              width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-              background: `rgba(${hexToRgb(stepColors[idx % stepColors.length])}, 0.15)`,
+              width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+              background: stepColors[idx % stepColors.length] + '15',
               border: `2px solid ${stepColors[idx % stepColors.length]}`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 700,
+              fontSize: 11, fontWeight: 700,
               color: stepColors[idx % stepColors.length],
-              boxShadow: `0 0 8px ${stepColors[idx % stepColors.length]}40`,
               zIndex: 1, position: 'relative'
             }}>
               {item.step}
             </div>
             <div style={{ flex: 1, paddingTop: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</span>
+                <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{item.title || '—'}</span>
                 {item.mitre && (
                   <span style={{
-                    fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                    background: 'rgba(139,92,246,0.15)', color: 'var(--accent-bright)',
-                    border: '1px solid rgba(139,92,246,0.3)', fontFamily: 'monospace'
+                    fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                    background: '#eef2ff', color: '#4f46e5', border: '1px solid #c7d2fe', fontFamily: 'monospace'
                   }}>{item.mitre}</span>
                 )}
                 {item.time && (
@@ -115,9 +108,9 @@ function KillChainTimeline({ events, stages }) {
               </div>
               {item.detail && (
                 <div style={{
-                  fontSize: 11, color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace',
-                  background: 'rgba(0,0,0,0.3)', padding: '4px 8px', borderRadius: 5, marginTop: 4,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 520
+                  fontSize: 11, color: '#64748b', fontFamily: 'JetBrains Mono, monospace',
+                  background: '#f8fafc', padding: '4px 8px', borderRadius: 5, marginTop: 4,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 480
                 }}>
                   {String(item.detail).slice(0, 120)}
                 </div>
@@ -130,182 +123,178 @@ function KillChainTimeline({ events, stages }) {
   )
 }
 
-function hexToRgb(hex) {
-  const res = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return res ? `${parseInt(res[1],16)},${parseInt(res[2],16)},${parseInt(res[3],16)}` : '255,255,255'
-}
-
-// ---------------------------------------------------------------------------
-// AI Narrative renderer (basic markdown → HTML-ish)
-// ---------------------------------------------------------------------------
+/* ── AI Narrative ─────────────────────────────────────────── */
 function AINarrative({ text }) {
-  if (!text) return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No AI narrative available.</div>
-
+  if (!text) return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No AI narrative available for this alert.</div>
   const parts = text.split(/(\*\*[^*]+\*\*)/g)
   return (
-    <div style={{
-      fontSize: 13.5, lineHeight: 1.75, color: 'var(--text-secondary)',
-      whiteSpace: 'pre-wrap'
-    }}>
+    <div style={{ fontSize: 13.5, lineHeight: 1.75, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
       {parts.map((p, i) =>
         p.startsWith('**') && p.endsWith('**')
-          ? <strong key={i} style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{p.slice(2, -2)}</strong>
+          ? <strong key={i} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{p.slice(2, -2)}</strong>
           : <span key={i}>{p}</span>
       )}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Expanded alert detail panel
-// ---------------------------------------------------------------------------
+/* ── Expanded Alert Detail ────────────────────────────────── */
 function AlertDetail({ alert, onClose }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [analyst, setAnalyst] = useState(alert.assigned_to || '')
   const [actionMsg, setActionMsg] = useState(null)
 
+  // Live analyst list from Admin Panel
+  const { data: analysts = [] } = useQuery({
+    queryKey: ['analysts'],
+    queryFn: fetchAnalysts,
+    staleTime: 60_000,
+  })
+
   const bid = alert.basket_id
 
   const mutAssign = useMutation({
     mutationFn: (name) => assignAlert(bid, name),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Assigned ✓') }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Alert assigned successfully.') }
   })
   const mutClose = useMutation({
     mutationFn: () => closeAlert(bid, analyst || 'analyst'),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Closed as Resolved ✓') }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Alert closed as resolved.') }
   })
   const mutFP = useMutation({
     mutationFn: () => markFalsePositive(bid, { analyst_name: analyst || 'analyst', host_name: alert.host_name, user_name: alert.user_name }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Marked as False Positive ✓ · Suppression added') }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }); setActionMsg('Marked as False Positive. Suppression rule added.') }
   })
 
   const enrichmentEntries = Object.entries(alert.enrichment || {})
 
   return (
-    <div style={{
-      borderTop: '1px solid rgba(139,92,246,0.2)',
-      background: 'rgba(139,92,246,0.04)',
-      padding: '20px 24px 24px'
-    }} className="fade-in">
+    <tr>
+      <td colSpan={9} style={{ padding: 0, background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+        <div style={{ padding: '20px 24px' }} className="fade-in">
 
-      {/* Three sections in tabs conceptually — shown as blocks */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-
-        {/* Kill Chain */}
-        <div className="glass-card" style={{ padding: '18px 20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <GitBranch size={15} color="var(--accent-bright)" />
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Kill Chain Timeline</span>
-          </div>
-          <KillChainTimeline events={alert.events} stages={alert.matched_stages} />
-        </div>
-
-        {/* Enrichment + AI */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Enrichment */}
-          <div className="glass-card" style={{ padding: '18px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-              <Shield size={15} color="#f97316" />
-              <span style={{ fontWeight: 700, fontSize: 14 }}>Threat Intelligence</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            {/* Kill Chain */}
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <GitBranch size={15} color="var(--accent)" />
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>Kill Chain Timeline</span>
+              </div>
+              <KillChainTimeline events={alert.events} stages={alert.matched_stages} />
             </div>
-            {enrichmentEntries.length > 0 ? (
-              enrichmentEntries.map(([ip, data]) => (
-                <EnrichmentCard key={ip} ip={ip} data={data} />
-              ))
-            ) : (
-              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No enrichment data.</div>
+
+            {/* Right column: TI + AI */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <Shield size={15} color="#ea580c" />
+                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>Threat Intelligence</span>
+                </div>
+                {enrichmentEntries.length > 0 ? (
+                  enrichmentEntries.map(([ip, data]) => (
+                    <ThreatIntelCard key={ip} ip={ip} data={data} />
+                  ))
+                ) : (
+                  <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '8px 0' }}>
+                    No enrichment data for this alert. IPs may not have been enriched yet.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <Brain size={15} color="#7c3aed" />
+                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>AI Narrative</span>
+                </div>
+                <AINarrative text={alert.ai_narrative} />
+              </div>
+            </div>
+          </div>
+
+          {/* Actions bar */}
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {/* Assign */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 200 }}>
+                <UserCheck size={15} color="var(--text-muted)" />
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Assign to:</span>
+                <select
+                  value={analyst}
+                  onChange={e => setAnalyst(e.target.value)}
+                  style={{ flex: 1, minWidth: 140, fontSize: 13 }}
+                >
+                  <option value="">— Select analyst —</option>
+                  {analysts.map(a => (
+                    <option key={a.id} value={a.name}>
+                      {a.name}{a.role ? ` (${a.role})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn btn-primary"
+                  disabled={!analyst || mutAssign.isPending}
+                  onClick={() => mutAssign.mutate(analyst)}
+                  style={{ whiteSpace: 'nowrap', fontSize: 13 }}
+                >
+                  {mutAssign.isPending ? 'Assigning…' : 'Assign'}
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-success"
+                  onClick={() => mutClose.mutate()}
+                  disabled={mutClose.isPending}
+                >
+                  <CheckCircle2 size={14} />
+                  {mutClose.isPending ? 'Closing…' : 'Close as Resolved'}
+                </button>
+                <button
+                  className="btn btn-warning"
+                  onClick={() => mutFP.mutate()}
+                  disabled={mutFP.isPending}
+                >
+                  <FileWarning size={14} />
+                  {mutFP.isPending ? 'Marking…' : 'False Positive'}
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => navigate('/cases/write', { state: { alert } })}
+                  style={{ borderColor: '#c7d2fe', color: '#4f46e5' }}
+                >
+                  <ArrowUpRight size={14} />
+                  Escalate to Case
+                </button>
+              </div>
+            </div>
+
+            {actionMsg && (
+              <div style={{
+                marginTop: 12, padding: '8px 14px', borderRadius: 8,
+                background: '#f0fdf4', color: '#16a34a',
+                fontSize: 13, fontWeight: 500, border: '1px solid #bbf7d0'
+              }}>
+                ✓ {actionMsg}
+              </div>
             )}
           </div>
-
-          {/* AI Narrative */}
-          <div className="glass-card" style={{ padding: '18px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-              <Brain size={15} color="#a78bfa" />
-              <span style={{ fontWeight: 700, fontSize: 14 }}>AI Narrative</span>
-            </div>
-            <AINarrative text={alert.ai_narrative} />
-          </div>
         </div>
-      </div>
-
-      {/* Actions bar */}
-      <div className="glass-card" style={{ padding: '14px 18px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 200 }}>
-            <UserCheck size={15} color="var(--text-muted)" />
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Assign to:</span>
-            <select
-              value={analyst}
-              onChange={e => setAnalyst(e.target.value)}
-              style={{ flex: 1, minWidth: 140 }}
-            >
-              <option value="">— Select analyst —</option>
-              {ANALYSTS.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
-            <button
-              className="btn btn-primary"
-              disabled={!analyst || mutAssign.isPending}
-              onClick={() => mutAssign.mutate(analyst)}
-              style={{ whiteSpace: 'nowrap' }}
-            >
-              {mutAssign.isPending ? 'Assigning…' : 'Assign'}
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              className="btn btn-success"
-              onClick={() => mutClose.mutate()}
-              disabled={mutClose.isPending}
-            >
-              <CheckCircle2 size={14} />
-              {mutClose.isPending ? 'Closing…' : 'Close as Resolved'}
-            </button>
-            <button
-              className="btn btn-warning"
-              onClick={() => mutFP.mutate()}
-              disabled={mutFP.isPending}
-            >
-              <FileWarning size={14} />
-              {mutFP.isPending ? 'Marking…' : 'Mark False Positive'}
-            </button>
-            <button
-              className="btn btn-ghost"
-              onClick={() => navigate('/cases/write', { state: { alert } })}
-            >
-              <ArrowUpRight size={14} />
-              Escalate to Case
-            </button>
-          </div>
-        </div>
-
-        {actionMsg && (
-          <div style={{
-            marginTop: 10, padding: '8px 14px', borderRadius: 7,
-            background: 'rgba(16,185,129,0.12)', color: '#10b981',
-            fontSize: 13, fontWeight: 600,
-            border: '1px solid rgba(16,185,129,0.3)'
-          }}>
-            ✓ {actionMsg}
-          </div>
-        )}
-      </div>
-    </div>
+      </td>
+    </tr>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Main Alert Queue Page
-// ---------------------------------------------------------------------------
+/* ── Main Alert Queue Page ────────────────────────────────── */
 export default function AlertQueuePage() {
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [expandedId, setExpandedId] = useState(null)
-  const LIMIT = 8
+  const LIMIT = 10
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['alerts', page, statusFilter],
     queryFn: () => fetchAlerts({ page, limit: LIMIT, status: statusFilter || undefined }),
     keepPreviousData: true,
@@ -339,17 +328,17 @@ export default function AlertQueuePage() {
   ]
 
   return (
-    <div style={{ padding: '28px 32px' }}>
+    <div style={{ padding: '28px 32px', background: 'var(--bg-main)', minHeight: '100vh' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 4 }}>Alert Queue</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Alert Queue</h1>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {isLoading ? 'Loading…' : `${total} alert${total !== 1 ? 's' : ''} — click any row to expand`}
+            {isLoading ? 'Loading…' : `${total} alert${total !== 1 ? 's' : ''} — click any row to expand details`}
           </div>
         </div>
-        <button className="btn btn-ghost" onClick={() => refetch()}>
-          <RefreshCw size={14} /> Refresh
+        <button className="btn btn-ghost" onClick={() => queryClient.invalidateQueries()} disabled={isFetching}>
+          <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} /> Refresh
         </button>
       </div>
 
@@ -365,12 +354,9 @@ export default function AlertQueuePage() {
             style={{ paddingLeft: 32, width: 240 }}
           />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Filter size={14} color="var(--text-muted)" />
-          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }}>
-            {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
+        <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }}>
+          {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       </div>
 
       {/* Table */}
@@ -379,8 +365,8 @@ export default function AlertQueuePage() {
           <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>Loading alerts…</div>
         ) : alerts.length === 0 ? (
           <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
-            <ShieldOff />
-            <div style={{ marginTop: 10 }}>No alerts found.</div>
+            <AlertTriangle size={32} style={{ marginBottom: 8, opacity: 0.4 }} />
+            <div>No alerts found.</div>
           </div>
         ) : (
           <table className="soc-table">
@@ -390,7 +376,7 @@ export default function AlertQueuePage() {
                 <th>Severity</th>
                 <th>Host</th>
                 <th>User</th>
-                <th>Chain / MITRE</th>
+                <th>MITRE Chain</th>
                 <th>Confidence</th>
                 <th>Time</th>
                 <th>Assigned</th>
@@ -408,12 +394,12 @@ export default function AlertQueuePage() {
                     <tr
                       key={alert.basket_id}
                       onClick={() => toggleRow(alert.basket_id)}
-                      style={{ background: isExpanded ? 'rgba(139,92,246,0.08)' : undefined }}
+                      style={{ background: isExpanded ? '#f8fafc' : undefined }}
                     >
                       {/* Expand chevron */}
                       <td style={{ paddingLeft: 16, paddingRight: 4 }}>
                         {isExpanded
-                          ? <ChevronDown size={15} color="var(--accent-bright)" />
+                          ? <ChevronDown size={15} color="var(--accent)" />
                           : <ChevronRight size={15} color="var(--text-muted)" />
                         }
                       </td>
@@ -447,8 +433,8 @@ export default function AlertQueuePage() {
                           {stages.slice(0, 2).map((s, i) => (
                             <span key={i} style={{
                               fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                              background: 'rgba(139,92,246,0.15)', color: 'var(--accent-bright)',
-                              border: '1px solid rgba(139,92,246,0.25)', fontFamily: 'monospace'
+                              background: '#eef2ff', color: '#4f46e5',
+                              border: '1px solid #c7d2fe', fontFamily: 'monospace'
                             }}>{s.mitre}</span>
                           ))}
                           {stages.length > 2 && (
@@ -463,20 +449,20 @@ export default function AlertQueuePage() {
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <div style={{
-                            width: 48, height: 5, borderRadius: 3,
-                            background: 'rgba(255,255,255,0.08)', overflow: 'hidden'
+                            width: 60, height: 4, borderRadius: 3,
+                            background: '#f1f5f9', overflow: 'hidden'
                           }}>
                             <div style={{
                               height: '100%',
                               width: `${alert.confidence_score}%`,
-                              background: severity === 'critical' ? '#f43f5e'
-                                : severity === 'high' ? '#f97316'
-                                : severity === 'medium' ? '#eab308'
-                                : '#06b6d4',
+                              background: severity === 'critical' ? '#dc2626'
+                                : severity === 'high' ? '#ea580c'
+                                : severity === 'medium' ? '#ca8a04'
+                                : '#0891b2',
                               borderRadius: 3
                             }} />
                           </div>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
                             {alert.confidence_score}%
                           </span>
                         </div>
@@ -508,13 +494,7 @@ export default function AlertQueuePage() {
                     </tr>
 
                     {/* Expanded detail row */}
-                    {isExpanded && (
-                      <tr key={`${alert.basket_id}-detail`}>
-                        <td colSpan={9} style={{ padding: 0 }}>
-                          <AlertDetail alert={alert} onClose={() => setExpandedId(null)} />
-                        </td>
-                      </tr>
-                    )}
+                    {isExpanded && <AlertDetail key={`${alert.basket_id}-detail`} alert={alert} onClose={() => setExpandedId(null)} />}
                   </>
                 )
               })}
@@ -531,16 +511,17 @@ export default function AlertQueuePage() {
             disabled={page <= 1}
             onClick={() => setPage(p => p - 1)}
           >
-            ← Previous
+            Prev
           </button>
           {Array.from({ length: Math.min(pages, 7) }, (_, i) => i + 1).map(p => (
             <button
               key={p}
               onClick={() => setPage(p)}
               style={{
-                width: 36, height: 36, borderRadius: 8, border: 'none',
-                background: p === page ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.05)',
-                color: p === page ? 'var(--accent-bright)' : 'var(--text-secondary)',
+                width: 36, height: 36, borderRadius: 8,
+                border: p === page ? '1px solid #c7d2fe' : '1px solid #e2e8f0',
+                background: p === page ? '#eef2ff' : '#fff',
+                color: p === page ? '#4f46e5' : 'var(--text-secondary)',
                 fontWeight: 600, fontSize: 13, cursor: 'pointer',
                 transition: 'all 0.15s'
               }}
@@ -553,21 +534,10 @@ export default function AlertQueuePage() {
             disabled={page >= pages}
             onClick={() => setPage(p => p + 1)}
           >
-            Next →
+            Next
           </button>
         </div>
       )}
-    </div>
-  )
-}
-
-function ShieldOff() {
-  return (
-    <div style={{ color: 'var(--text-muted)', opacity: 0.4 }}>
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7L12 2z" />
-        <line x1="3" y1="3" x2="21" y2="21" />
-      </svg>
     </div>
   )
 }
