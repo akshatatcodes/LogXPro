@@ -44,8 +44,8 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Phase 3: Enrichment API keys                                         #
     # ------------------------------------------------------------------ #
-    VT_API_KEY        = os.getenv("VT_API_KEY",        "e5d018e3d8bbe60164fe3c2dc49f735ea57010451c146218aca3ea1ab223f625")   # VirusTotal free key
-    ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "07144763ede2a6d4daf6e84e2bd6a5af9ccd9302a5013dcfcd764beaaf252bb055eff8cc52b94598")   # AbuseIPDB free key
+    VT_API_KEY        = os.getenv("VT_API_KEY",        "")   # VirusTotal free key
+    ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")   # AbuseIPDB free key
     MISP_URL          = os.getenv("MISP_URL",          "http://localhost")
     MISP_API_KEY      = os.getenv("MISP_API_KEY",      "")
 

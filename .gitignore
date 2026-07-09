@@ -24,3 +24,6 @@ chromadb_store/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Repomix output
+repomix-output.xml
