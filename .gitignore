@@ -27,3 +27,7 @@ Thumbs.db
 
 # Repomix output
 repomix-output.xml
+
+# Packet captures
+*.pcap
+*.cap
