@@ -92,7 +92,7 @@ function Sidebar() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
             width: 34, height: 34, borderRadius: 8,
-            background: '#4f46e5',
+            background: '#6366f1',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <ShieldCheck size={18} color="#fff" />
@@ -108,15 +108,15 @@ function Sidebar() {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '6px 10px', marginBottom: 20,
-        background: '#f0fdf4', borderRadius: 8,
-        border: '1px solid #bbf7d0'
+        background: 'rgba(16, 185, 129, 0.1)', borderRadius: 8,
+        border: '1px solid rgba(16, 185, 129, 0.2)'
       }}>
         <div style={{
           width: 7, height: 7, borderRadius: '50%',
-          background: '#16a34a', position: 'relative',
-          boxShadow: '0 0 6px #16a34a'
+          background: '#10b981', position: 'relative',
+          boxShadow: '0 0 8px #10b981'
         }} className="pulse-dot" />
-        <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>Engine Live</span>
+        <span style={{ fontSize: 12, color: '#10b981', fontWeight: 600 }}>Engine Live</span>
       </div>
 
       {/* Nav */}

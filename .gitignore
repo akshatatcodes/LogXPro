@@ -31,3 +31,23 @@ repomix-output.xml
 # Packet captures
 *.pcap
 *.cap
+
+# Node / npm
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build output
+frontend/dist/
+frontend/.vite/
+
+# Puppeteer / Chromium cache
+.cache/
+.local-chromium/
+
+# Python logs & test artifacts
+*.log
+logs/
+*.sqlite3
